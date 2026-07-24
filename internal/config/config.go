@@ -1,0 +1,424 @@
+package config
+
+import (
+	"bytes"
+	"errors"
+	"flag"
+	"fmt"
+	"log/slog"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
+const DefaultEventType = "state_changed"
+
+const (
+	defaultStartThresholdW  = 200
+	defaultEndThresholdW    = 50
+	defaultEndDebounce      = 10 * time.Second
+	defaultConfigFilePath   = "config.yaml"
+	defaultDeviceConfigPath = "devices.yaml"
+	defaultIngressStorePath = "var/ingress-events.jsonl"
+	defaultActiveStorePath  = "var/current-session.json"
+	defaultSessionStorePath = "var/sessions.jsonl"
+	defaultLogFilePath      = "log/app.log"
+)
+
+type Runtime struct {
+	ConfigFile      string
+	HAURL           string
+	Token           string
+	EventType       string
+	DeviceConfig    string
+	StartThresholdW float64
+	EndThresholdW   float64
+	EndDebounce     time.Duration
+	IngressStore    string
+	ActiveStore     string
+	SessionStore    string
+	LogFile         string
+}
+
+type V1 struct {
+	HomeAssistant HomeAssistant `yaml:"home_assistant"`
+	Chargers      []Charger     `yaml:"chargers"`
+	Retention     Retention     `yaml:"retention"`
+	Runtime       Paths         `yaml:"runtime"`
+}
+
+type HomeAssistant struct {
+	URL        string   `yaml:"url"`
+	Token      string   `yaml:"token"`
+	EventTypes []string `yaml:"event_types"`
+}
+
+type Charger struct {
+	ChargerID    string         `yaml:"charger_id"`
+	EVSEID       string         `yaml:"evse_id"`
+	ConnectorID  string         `yaml:"connector_id"`
+	MeterID      string         `yaml:"meter_id"`
+	Entities     EntityMapping  `yaml:"entities"`
+	Availability Availability   `yaml:"availability"`
+	Start        PowerThreshold `yaml:"start"`
+	Stop         PowerThreshold `yaml:"stop"`
+	Meters       []Meter        `yaml:"meters"`
+}
+
+type EntityMapping struct {
+	PowerW       string `yaml:"power_w"`
+	EnergyKWh    string `yaml:"energy_kwh"`
+	Availability string `yaml:"availability"`
+	Fault        string `yaml:"fault"`
+	Plug         string `yaml:"plug"`
+}
+
+type Availability struct {
+	EntityID         string `yaml:"entity_id"`
+	AvailableState   string `yaml:"available_state"`
+	UnavailableState string `yaml:"unavailable_state"`
+	UnavailableAfter string `yaml:"unavailable_after"`
+}
+
+type PowerThreshold struct {
+	Type       string  `yaml:"type"`
+	EntityID   string  `yaml:"entity_id"`
+	ThresholdW float64 `yaml:"threshold_w"`
+	Duration   string  `yaml:"duration"`
+}
+
+type Meter struct {
+	MeterID               string `yaml:"meter_id"`
+	EntityID              string `yaml:"entity_id"`
+	Unit                  string `yaml:"unit"`
+	Aggregation           string `yaml:"aggregation"`
+	OutsideSessionStorage string `yaml:"outside_session_storage"`
+}
+
+type Retention struct {
+	MeterValues     string `yaml:"meter_values"`
+	LifecycleEvents string `yaml:"lifecycle_events"`
+	RawEvents       string `yaml:"raw_events"`
+}
+
+type Paths struct {
+	DeviceConfig       string `yaml:"device_config"`
+	IngressStore       string `yaml:"ingress_store"`
+	ActiveSessionStore string `yaml:"active_session_store"`
+	SessionStore       string `yaml:"session_store"`
+	LogFile            string `yaml:"log_file"`
+}
+
+func ParseRuntime() (Runtime, error) {
+	cfg := Runtime{}
+	flag.StringVar(&cfg.ConfigFile, "config", envOrDefault("CONFIG_FILE", defaultConfigFilePath), "Path to YAML application configuration")
+	flag.StringVar(&cfg.HAURL, "ha-url", os.Getenv("HA_URL"), "Home Assistant base URL, e.g. http://home-assistant.example.local:8123")
+	flag.StringVar(&cfg.Token, "token", os.Getenv("HA_TOKEN"), "Home Assistant long-lived access token")
+	flag.StringVar(&cfg.EventType, "event-type", envOrDefault("HA_EVENT_TYPE", DefaultEventType), "Home Assistant event type to subscribe to; empty subscribes to all events")
+	flag.StringVar(&cfg.DeviceConfig, "device-config", envOrDefault("DEVICE_CONFIG", defaultDeviceConfigPath), "Path to YAML device configuration")
+	flag.Float64Var(&cfg.StartThresholdW, "start-threshold-w", envFloatOrDefault("SESSION_START_THRESHOLD_W", defaultStartThresholdW), "Power threshold in watts that starts a session")
+	flag.Float64Var(&cfg.EndThresholdW, "end-threshold-w", envFloatOrDefault("SESSION_END_THRESHOLD_W", defaultEndThresholdW), "Power threshold in watts that can end a session")
+	flag.DurationVar(&cfg.EndDebounce, "end-debounce", envDurationOrDefault("SESSION_END_DEBOUNCE", defaultEndDebounce), "How long power must remain below the end threshold before ending a session")
+	flag.StringVar(&cfg.IngressStore, "ingress-store", envOrDefault("INGRESS_STORE", defaultIngressStorePath), "Path to append raw received Home Assistant events as JSON lines")
+	flag.StringVar(&cfg.ActiveStore, "active-store", envOrDefault("ACTIVE_SESSION_STORE", defaultActiveStorePath), "Path to write the current in-progress session as JSON")
+	flag.StringVar(&cfg.SessionStore, "session-store", envOrDefault("SESSION_STORE", defaultSessionStorePath), "Path to append completed sessions as JSON lines")
+	flag.StringVar(&cfg.LogFile, "log-file", envOrDefault("LOG_FILE", defaultLogFilePath), "Path to append application logs")
+	flag.Parse()
+
+	loaded, err := loadRuntimeConfig(cfg.ConfigFile)
+	if err != nil {
+		return Runtime{}, err
+	}
+	if loaded != nil {
+		cfg = mergeRuntimeConfig(cfg, *loaded)
+	}
+	return cfg, nil
+}
+
+func LoadV1File(path string) (V1, error) {
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		return V1{}, fmt.Errorf("read config %q: %w", path, err)
+	}
+	return ParseV1(payload, os.LookupEnv)
+}
+
+func ParseV1(payload []byte, lookupEnv func(string) (string, bool)) (V1, error) {
+	resolved, err := interpolateEnv(payload, lookupEnv)
+	if err != nil {
+		return V1{}, err
+	}
+
+	var cfg V1
+	decoder := yaml.NewDecoder(bytes.NewReader(resolved))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&cfg); err != nil {
+		return V1{}, fmt.Errorf("parse config: %w", err)
+	}
+	if err := cfg.validate(); err != nil {
+		return V1{}, err
+	}
+	return cfg, nil
+}
+
+func loadRuntimeConfig(path string) (*Runtime, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, nil
+	}
+
+	v1, err := LoadV1File(path)
+	if errors.Is(err, os.ErrNotExist) && path == defaultConfigFilePath {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	return v1.toRuntime(), nil
+}
+
+func (c V1) validate() error {
+	if strings.TrimSpace(c.HomeAssistant.URL) == "" {
+		return errors.New("home_assistant.url is required")
+	}
+	if strings.TrimSpace(c.HomeAssistant.Token) == "" {
+		return errors.New("home_assistant.token is required")
+	}
+	if len(c.Chargers) == 0 {
+		return errors.New("at least one charger is required")
+	}
+
+	chargerIDs := make(map[string]struct{}, len(c.Chargers))
+	entityIDs := map[string]string{}
+	for i, charger := range c.Chargers {
+		name := fmt.Sprintf("chargers[%d]", i)
+		if err := validateRequired(name+".charger_id", charger.ChargerID); err != nil {
+			return err
+		}
+		if err := validateRequired(name+".evse_id", charger.EVSEID); err != nil {
+			return err
+		}
+		if err := validateRequired(name+".connector_id", charger.ConnectorID); err != nil {
+			return err
+		}
+		if err := validateRequired(name+".meter_id", charger.MeterID); err != nil {
+			return err
+		}
+		if _, exists := chargerIDs[charger.ChargerID]; exists {
+			return fmt.Errorf("duplicate charger_id %q", charger.ChargerID)
+		}
+		chargerIDs[charger.ChargerID] = struct{}{}
+
+		if err := validatePowerThreshold(name+".start", charger.Start); err != nil {
+			return err
+		}
+		if err := validatePowerThreshold(name+".stop", charger.Stop); err != nil {
+			return err
+		}
+		if strings.TrimSpace(charger.Availability.UnavailableAfter) != "" {
+			if _, err := parseConfigDuration(charger.Availability.UnavailableAfter); err != nil {
+				return fmt.Errorf("%s.availability.unavailable_after is invalid: %w", name, err)
+			}
+		}
+		for j, meter := range charger.Meters {
+			meterName := fmt.Sprintf("%s.meters[%d]", name, j)
+			if err := validateRequired(meterName+".meter_id", meter.MeterID); err != nil {
+				return err
+			}
+			if err := validateRequired(meterName+".entity_id", meter.EntityID); err != nil {
+				return err
+			}
+			switch meter.Aggregation {
+			case "average", "last":
+			default:
+				return fmt.Errorf("%s.aggregation must be average or last", meterName)
+			}
+			switch meter.OutsideSessionStorage {
+			case "save", "drop":
+			default:
+				return fmt.Errorf("%s.outside_session_storage must be save or drop", meterName)
+			}
+		}
+		for label, entityID := range map[string]string{
+			"power_w":      charger.Entities.PowerW,
+			"energy_kwh":   charger.Entities.EnergyKWh,
+			"availability": charger.Entities.Availability,
+		} {
+			if strings.TrimSpace(entityID) == "" {
+				continue
+			}
+			if owner, exists := entityIDs[entityID]; exists {
+				return fmt.Errorf("duplicate entity_id %q used by %s and %s.%s", entityID, owner, name, label)
+			}
+			entityIDs[entityID] = name + "." + label
+		}
+	}
+	for label, duration := range map[string]string{
+		"retention.meter_values":     c.Retention.MeterValues,
+		"retention.lifecycle_events": c.Retention.LifecycleEvents,
+		"retention.raw_events":       c.Retention.RawEvents,
+	} {
+		if strings.TrimSpace(duration) == "" {
+			continue
+		}
+		if _, err := parseConfigDuration(duration); err != nil {
+			return fmt.Errorf("%s is invalid: %w", label, err)
+		}
+	}
+
+	return nil
+}
+
+func validateRequired(name, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%s is required", name)
+	}
+	return nil
+}
+
+func validatePowerThreshold(name string, rule PowerThreshold) error {
+	if strings.TrimSpace(rule.Type) != "power_threshold" {
+		return fmt.Errorf("%s.type must be power_threshold", name)
+	}
+	if err := validateRequired(name+".entity_id", rule.EntityID); err != nil {
+		return err
+	}
+	if rule.ThresholdW < 0 {
+		return fmt.Errorf("%s.threshold_w must be non-negative", name)
+	}
+	if strings.TrimSpace(rule.Duration) != "" {
+		if _, err := parseConfigDuration(rule.Duration); err != nil {
+			return fmt.Errorf("%s.duration is invalid: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func parseConfigDuration(value string) (time.Duration, error) {
+	trimmed := strings.TrimSpace(value)
+	if strings.HasSuffix(trimmed, "d") {
+		days, err := strconv.ParseFloat(strings.TrimSuffix(trimmed, "d"), 64)
+		if err != nil {
+			return 0, err
+		}
+		return time.Duration(days * float64(24*time.Hour)), nil
+	}
+	return time.ParseDuration(trimmed)
+}
+
+func (c V1) toRuntime() *Runtime {
+	cfg := &Runtime{
+		HAURL:        c.HomeAssistant.URL,
+		Token:        c.HomeAssistant.Token,
+		EventType:    DefaultEventType,
+		DeviceConfig: envOrValue(c.Runtime.DeviceConfig, defaultDeviceConfigPath),
+		IngressStore: envOrValue(c.Runtime.IngressStore, defaultIngressStorePath),
+		ActiveStore:  envOrValue(c.Runtime.ActiveSessionStore, defaultActiveStorePath),
+		SessionStore: envOrValue(c.Runtime.SessionStore, defaultSessionStorePath),
+		LogFile:      envOrValue(c.Runtime.LogFile, defaultLogFilePath),
+	}
+	if len(c.HomeAssistant.EventTypes) > 0 {
+		cfg.EventType = c.HomeAssistant.EventTypes[0]
+	}
+	if len(c.Chargers) > 0 {
+		cfg.StartThresholdW = c.Chargers[0].Start.ThresholdW
+		cfg.EndThresholdW = c.Chargers[0].Stop.ThresholdW
+		if duration, err := parseConfigDuration(c.Chargers[0].Stop.Duration); err == nil && duration > 0 {
+			cfg.EndDebounce = duration
+		} else {
+			cfg.EndDebounce = defaultEndDebounce
+		}
+	}
+	return cfg
+}
+
+func mergeRuntimeConfig(current Runtime, loaded Runtime) Runtime {
+	loaded.ConfigFile = current.ConfigFile
+	flag.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "ha-url":
+			loaded.HAURL = current.HAURL
+		case "token":
+			loaded.Token = current.Token
+		case "event-type":
+			loaded.EventType = current.EventType
+		case "device-config":
+			loaded.DeviceConfig = current.DeviceConfig
+		case "start-threshold-w":
+			loaded.StartThresholdW = current.StartThresholdW
+		case "end-threshold-w":
+			loaded.EndThresholdW = current.EndThresholdW
+		case "end-debounce":
+			loaded.EndDebounce = current.EndDebounce
+		case "ingress-store":
+			loaded.IngressStore = current.IngressStore
+		case "active-store":
+			loaded.ActiveStore = current.ActiveStore
+		case "session-store":
+			loaded.SessionStore = current.SessionStore
+		case "log-file":
+			loaded.LogFile = current.LogFile
+		}
+	})
+	return loaded
+}
+
+func interpolateEnv(payload []byte, lookupEnv func(string) (string, bool)) ([]byte, error) {
+	var missing []string
+	resolved := os.Expand(string(payload), func(name string) string {
+		value, ok := lookupEnv(name)
+		if !ok {
+			missing = append(missing, name)
+			return ""
+		}
+		return value
+	})
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("missing environment variable %q", missing[0])
+	}
+	return []byte(resolved), nil
+}
+
+func envOrValue(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func envOrDefault(name, fallback string) string {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func envFloatOrDefault(name string, fallback float64) float64 {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		slog.Warn("invalid float environment variable; using default", "name", name, "value", value, "default", fallback)
+		return fallback
+	}
+	return parsed
+}
+
+func envDurationOrDefault(name string, fallback time.Duration) time.Duration {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil {
+		slog.Warn("invalid duration environment variable; using default", "name", name, "value", value, "default", fallback)
+		return fallback
+	}
+	return parsed
+}

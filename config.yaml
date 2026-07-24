@@ -1,0 +1,55 @@
+home_assistant:
+  url: ${HA_URL}
+  token: ${HA_TOKEN}
+  event_types:
+    - state_changed
+
+chargers:
+  - charger_id: charger-1
+    evse_id: evse-1
+    connector_id: connector-1
+    meter_id: meter-1
+    entities:
+      power_w: sensor.ev_charger_power
+      energy_kwh: sensor.ev_charger_energy
+      availability: binary_sensor.ev_charger_online
+      fault: sensor.ev_charger_fault
+      plug: binary_sensor.ev_connector_plugged
+    availability:
+      entity_id: binary_sensor.ev_charger_online
+      available_state: "on"
+      unavailable_state: "off"
+      unavailable_after: 2m
+    start:
+      type: power_threshold
+      entity_id: sensor.ev_charger_power
+      threshold_w: 200
+      duration: 0s
+    stop:
+      type: power_threshold
+      entity_id: sensor.ev_charger_power
+      threshold_w: 50
+      duration: 10s
+    meters:
+      - meter_id: meter-1
+        entity_id: sensor.ev_charger_power
+        unit: W
+        aggregation: average
+        outside_session_storage: drop
+      - meter_id: meter-1
+        entity_id: sensor.ev_charger_energy
+        unit: kWh
+        aggregation: last
+        outside_session_storage: save
+
+retention:
+  meter_values: 90d
+  lifecycle_events: 365d
+  raw_events: 7d
+
+runtime:
+  device_config: devices.yaml
+  ingress_store: var/ingress-events.jsonl
+  active_session_store: var/current-session.json
+  session_store: var/sessions.jsonl
+  log_file: log/app.log

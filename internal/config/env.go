@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"bufio"
@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-func loadDotEnv(path string) error {
+func LoadDotEnv(path string) error {
 	file, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
