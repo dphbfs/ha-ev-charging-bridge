@@ -2,17 +2,19 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	bridgeconfig "ha-ev-charging-bridge/internal/config"
+	"ha-ev-charging-bridge/internal/events"
 	"ha-ev-charging-bridge/internal/homeassistant"
+	"ha-ev-charging-bridge/internal/persistence"
 )
 
 type session struct {
@@ -35,6 +37,7 @@ type session struct {
 type smartPlugHandler struct {
 	cfg              bridgeconfig.Runtime
 	device           deviceConfig
+	store            *persistence.Store
 	active           *session
 	latestEnergyKWh  *float64
 	latestPowerW     *float64
@@ -42,8 +45,8 @@ type smartPlugHandler struct {
 	endTimer         *time.Timer
 }
 
-func newSmartPlugHandler(cfg bridgeconfig.Runtime, device deviceConfig) *smartPlugHandler {
-	return &smartPlugHandler{cfg: cfg, device: device}
+func newSmartPlugHandler(cfg bridgeconfig.Runtime, device deviceConfig, store *persistence.Store) *smartPlugHandler {
+	return &smartPlugHandler{cfg: cfg, device: device, store: store}
 }
 
 func (h *smartPlugHandler) initialize(states []homeassistant.State) error {
@@ -61,7 +64,7 @@ func (h *smartPlugHandler) initialize(states []homeassistant.State) error {
 			}
 		}
 	}
-	slog.Info("smart plug handler initialized", "device", h.device.Name, "power_entity_id", h.device.EntityID, "energy_entity_id", h.device.EnergyEntityID, "session_store", h.cfg.SessionStore)
+	slog.Info("smart plug handler initialized", "device", h.device.Name, "power_entity_id", h.device.EntityID, "energy_entity_id", h.device.EnergyEntityID, "database", h.cfg.DatabasePath)
 
 	if err := h.loadActive(); err != nil {
 		return err
@@ -73,28 +76,21 @@ func (h *smartPlugHandler) initialize(states []homeassistant.State) error {
 }
 
 func (h *smartPlugHandler) loadActive() error {
-	if strings.TrimSpace(h.cfg.ActiveStore) == "" {
+	if h.store == nil {
 		return nil
 	}
 
-	payload, err := os.ReadFile(h.cfg.ActiveStore)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
+	active, ok, err := h.store.ActiveSession(context.Background(), h.device.Name)
 	if err != nil {
-		return fmt.Errorf("read active session: %w", err)
+		return err
 	}
-
-	var active session
-	if err := json.Unmarshal(payload, &active); err != nil {
-		return fmt.Errorf("parse active session: %w", err)
-	}
-	if active.Status != "in_progress" {
+	if !ok {
 		return nil
 	}
 
-	h.active = &active
-	slog.Info("resumed active session", "session_id", active.ID, "start_energy_kwh", active.StartEnergyKWh)
+	legacy := legacySessionFromEventSession(active, h.device)
+	h.active = &legacy
+	slog.Info("resumed active session", "session_id", active.ID)
 	return nil
 }
 
@@ -121,6 +117,11 @@ func (h *smartPlugHandler) handleEvent(payload []byte) error {
 	switch entityID {
 	case h.device.EnergyEntityID:
 		h.latestEnergyKWh = &value
+		if h.active != nil {
+			if err := h.writeMeterValue(entityID, "kWh", value, eventTime(msg.Event.TimeFired)); err != nil {
+				return err
+			}
+		}
 		return h.writeActive()
 	case h.device.EntityID:
 		h.latestPowerW = &value
@@ -152,6 +153,16 @@ func (h *smartPlugHandler) handlePower(powerW float64, at time.Time) error {
 		if err := h.writeActive(); err != nil {
 			return err
 		}
+		if h.store != nil {
+			if err := h.store.SaveSessionEvent(context.Background(), events.SessionEvent{
+				Type:       events.SessionStarted,
+				SessionID:  h.active.ID,
+				ChargerID:  h.active.DeviceName,
+				OccurredAt: at,
+			}); err != nil {
+				return err
+			}
+		}
 		slog.Info("session started", "session_id", h.active.ID, "device", h.device.Name, "power_w", powerW, "start_energy_kwh", h.active.StartEnergyKWh)
 	}
 
@@ -159,6 +170,9 @@ func (h *smartPlugHandler) handlePower(powerW float64, at time.Time) error {
 		return nil
 	}
 	h.active.CurrentPowerW = powerW
+	if err := h.writeMeterValue(h.device.EntityID, "W", powerW, at); err != nil {
+		return err
+	}
 	if h.latestEnergyKWh != nil {
 		h.active.EndEnergyKWh = *h.latestEnergyKWh
 		h.active.EnergyConsumedKWh = h.active.EndEnergyKWh - h.active.StartEnergyKWh
@@ -207,10 +221,19 @@ func (h *smartPlugHandler) finishAfterDebounce() error {
 	h.active.EnergyConsumedKWh = h.active.EndEnergyKWh - h.active.StartEnergyKWh
 
 	completed := *h.active
-	if err := appendSession(h.cfg.SessionStore, completed); err != nil {
+	if h.store == nil {
+		return errors.New("cannot finish session: SQLite store is not configured")
+	}
+	if err := h.store.SaveCompletedSession(context.Background(), eventSessionFromLegacy(completed, events.SessionEndedState)); err != nil {
 		return err
 	}
-	if err := writeSession(h.cfg.ActiveStore, completed); err != nil {
+	if err := h.store.SaveSessionEvent(context.Background(), events.SessionEvent{
+		Type:       events.SessionEnded,
+		SessionID:  completed.ID,
+		ChargerID:  completed.DeviceName,
+		OccurredAt: endedAt,
+		Reason:     string(events.ChargingStopped),
+	}); err != nil {
 		return err
 	}
 
@@ -228,7 +251,88 @@ func (h *smartPlugHandler) writeActive() error {
 		h.active.EndEnergyKWh = *h.latestEnergyKWh
 		h.active.EnergyConsumedKWh = h.active.EndEnergyKWh - h.active.StartEnergyKWh
 	}
-	return writeSession(h.cfg.ActiveStore, *h.active)
+	if h.store == nil {
+		return nil
+	}
+	if err := h.store.SaveActiveSession(context.Background(), eventSessionFromLegacy(*h.active, events.SessionCharging)); err != nil {
+		return err
+	}
+	return h.store.SaveSessionEvent(context.Background(), events.SessionEvent{
+		Type:       events.SessionUpdated,
+		SessionID:  h.active.ID,
+		ChargerID:  h.active.DeviceName,
+		OccurredAt: time.Now(),
+	})
+}
+
+func (h *smartPlugHandler) writeMeterValue(entityID, unit string, value float64, at time.Time) error {
+	if h.store == nil || h.active == nil {
+		return nil
+	}
+	return h.store.SaveMeterValue(context.Background(), events.MeterValue{
+		SessionID:  h.active.ID,
+		ChargerID:  h.active.DeviceName,
+		MeterID:    h.active.DeviceName + "-meter-1",
+		EntityID:   entityID,
+		Unit:       unit,
+		Value:      value,
+		ObservedAt: at,
+	})
+}
+
+func smartPlugChargerConfig(device deviceConfig) bridgeconfig.Charger {
+	return bridgeconfig.Charger{
+		ChargerID:   device.Name,
+		EVSEID:      device.Name + "-evse-1",
+		ConnectorID: "connector-1",
+		MeterID:     device.Name + "-meter-1",
+		Entities: bridgeconfig.EntityMapping{
+			PowerW:    device.EntityID,
+			EnergyKWh: device.EnergyEntityID,
+		},
+	}
+}
+
+func eventSessionFromLegacy(value session, state events.SessionState) events.Session {
+	startEnergy := value.StartEnergyKWh
+	endEnergy := value.EndEnergyKWh
+	consumed := value.EnergyConsumedKWh
+	return events.Session{
+		ID:                value.ID,
+		ChargerID:         value.DeviceName,
+		EVSEID:            value.DeviceName + "-evse-1",
+		ConnectorID:       "connector-1",
+		MeterID:           value.DeviceName + "-meter-1",
+		State:             state,
+		StartedAt:         value.StartedAt,
+		EndedAt:           value.EndedAt,
+		StartEnergyKWh:    &startEnergy,
+		EndEnergyKWh:      &endEnergy,
+		EnergyConsumedKWh: &consumed,
+	}
+}
+
+func legacySessionFromEventSession(value events.Session, device deviceConfig) session {
+	legacy := session{
+		ID:             value.ID,
+		DeviceName:     device.Name,
+		DeviceType:     device.Type,
+		PowerEntityID:  device.EntityID,
+		EnergyEntityID: device.EnergyEntityID,
+		Status:         "in_progress",
+		StartedAt:      value.StartedAt,
+		EndedAt:        value.EndedAt,
+	}
+	if value.StartEnergyKWh != nil {
+		legacy.StartEnergyKWh = *value.StartEnergyKWh
+	}
+	if value.EndEnergyKWh != nil {
+		legacy.EndEnergyKWh = *value.EndEnergyKWh
+	}
+	if value.EnergyConsumedKWh != nil {
+		legacy.EnergyConsumedKWh = *value.EnergyConsumedKWh
+	}
+	return legacy
 }
 
 func parseStateFloat(raw string) (float64, error) {

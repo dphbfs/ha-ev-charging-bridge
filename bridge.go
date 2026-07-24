@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -10,17 +11,15 @@ import (
 	"github.com/gorilla/websocket"
 	bridgeconfig "ha-ev-charging-bridge/internal/config"
 	"ha-ev-charging-bridge/internal/homeassistant"
+	"ha-ev-charging-bridge/internal/persistence"
 )
 
 func run(cfg bridgeconfig.Runtime) error {
 	if err := ensureParentDir(cfg.IngressStore); err != nil {
 		return fmt.Errorf("prepare ingress event store: %w", err)
 	}
-	if err := ensureParentDir(cfg.ActiveStore); err != nil {
-		return fmt.Errorf("prepare active session store: %w", err)
-	}
-	if err := ensureParentDir(cfg.SessionStore); err != nil {
-		return fmt.Errorf("prepare session store: %w", err)
+	if err := ensureParentDir(cfg.DatabasePath); err != nil {
+		return fmt.Errorf("prepare SQLite database: %w", err)
 	}
 
 	if strings.TrimSpace(cfg.HAURL) == "" {
@@ -41,6 +40,15 @@ func run(cfg bridgeconfig.Runtime) error {
 		slog.Info("multiple smart plug devices found; using first for this POC", "count", smartPlugCount, "device", smartPlug.Name)
 	}
 	slog.Info("loaded smart plug device", "device", smartPlug.Name, "power_entity_id", smartPlug.EntityID, "energy_entity_id", smartPlug.EnergyEntityID)
+	ctx := context.Background()
+	store, err := persistence.Open(ctx, cfg.DatabasePath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	if err := store.SaveCharger(ctx, smartPlugChargerConfig(smartPlug)); err != nil {
+		return err
+	}
 
 	wsURL, err := homeassistant.WebsocketURL(cfg.HAURL)
 	if err != nil {
@@ -63,7 +71,7 @@ func run(cfg bridgeconfig.Runtime) error {
 		return err
 	}
 
-	sessionTracker := newSmartPlugHandler(cfg, smartPlug)
+	sessionTracker := newSmartPlugHandler(cfg, smartPlug, store)
 	if err := sessionTracker.initialize(states); err != nil {
 		return err
 	}

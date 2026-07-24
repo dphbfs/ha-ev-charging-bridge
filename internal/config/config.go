@@ -23,8 +23,7 @@ const (
 	defaultConfigFilePath   = "config.yaml"
 	defaultDeviceConfigPath = "devices.yaml"
 	defaultIngressStorePath = "var/ingress-events.jsonl"
-	defaultActiveStorePath  = "var/current-session.json"
-	defaultSessionStorePath = "var/sessions.jsonl"
+	defaultDatabasePath     = "var/bridge.db"
 	defaultLogFilePath      = "log/app.log"
 )
 
@@ -38,8 +37,7 @@ type Runtime struct {
 	EndThresholdW   float64
 	EndDebounce     time.Duration
 	IngressStore    string
-	ActiveStore     string
-	SessionStore    string
+	DatabasePath    string
 	LogFile         string
 }
 
@@ -105,11 +103,10 @@ type Retention struct {
 }
 
 type Paths struct {
-	DeviceConfig       string `yaml:"device_config"`
-	IngressStore       string `yaml:"ingress_store"`
-	ActiveSessionStore string `yaml:"active_session_store"`
-	SessionStore       string `yaml:"session_store"`
-	LogFile            string `yaml:"log_file"`
+	DeviceConfig string `yaml:"device_config"`
+	IngressStore string `yaml:"ingress_store"`
+	DatabasePath string `yaml:"database_path"`
+	LogFile      string `yaml:"log_file"`
 }
 
 func ParseRuntime() (Runtime, error) {
@@ -123,8 +120,7 @@ func ParseRuntime() (Runtime, error) {
 	flag.Float64Var(&cfg.EndThresholdW, "end-threshold-w", envFloatOrDefault("SESSION_END_THRESHOLD_W", defaultEndThresholdW), "Power threshold in watts that can end a session")
 	flag.DurationVar(&cfg.EndDebounce, "end-debounce", envDurationOrDefault("SESSION_END_DEBOUNCE", defaultEndDebounce), "How long power must remain below the end threshold before ending a session")
 	flag.StringVar(&cfg.IngressStore, "ingress-store", envOrDefault("INGRESS_STORE", defaultIngressStorePath), "Path to append raw received Home Assistant events as JSON lines")
-	flag.StringVar(&cfg.ActiveStore, "active-store", envOrDefault("ACTIVE_SESSION_STORE", defaultActiveStorePath), "Path to write the current in-progress session as JSON")
-	flag.StringVar(&cfg.SessionStore, "session-store", envOrDefault("SESSION_STORE", defaultSessionStorePath), "Path to append completed sessions as JSON lines")
+	flag.StringVar(&cfg.DatabasePath, "database", envOrDefault("DATABASE_PATH", defaultDatabasePath), "Path to SQLite runtime database")
 	flag.StringVar(&cfg.LogFile, "log-file", envOrDefault("LOG_FILE", defaultLogFilePath), "Path to append application logs")
 	flag.Parse()
 
@@ -316,8 +312,7 @@ func (c V1) toRuntime() *Runtime {
 		EventType:    DefaultEventType,
 		DeviceConfig: envOrValue(c.Runtime.DeviceConfig, defaultDeviceConfigPath),
 		IngressStore: envOrValue(c.Runtime.IngressStore, defaultIngressStorePath),
-		ActiveStore:  envOrValue(c.Runtime.ActiveSessionStore, defaultActiveStorePath),
-		SessionStore: envOrValue(c.Runtime.SessionStore, defaultSessionStorePath),
+		DatabasePath: envOrValue(c.Runtime.DatabasePath, defaultDatabasePath),
 		LogFile:      envOrValue(c.Runtime.LogFile, defaultLogFilePath),
 	}
 	if len(c.HomeAssistant.EventTypes) > 0 {
@@ -355,10 +350,8 @@ func mergeRuntimeConfig(current Runtime, loaded Runtime) Runtime {
 			loaded.EndDebounce = current.EndDebounce
 		case "ingress-store":
 			loaded.IngressStore = current.IngressStore
-		case "active-store":
-			loaded.ActiveStore = current.ActiveStore
-		case "session-store":
-			loaded.SessionStore = current.SessionStore
+		case "database":
+			loaded.DatabasePath = current.DatabasePath
 		case "log-file":
 			loaded.LogFile = current.LogFile
 		}

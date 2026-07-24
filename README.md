@@ -35,7 +35,7 @@ Run the bridge:
 ./ha-ev-charging-bridge
 ```
 
-The current POC writes runtime data under `var/` and logs under `log/` by default.
+The current POC writes SQLite runtime data under `var/` and logs under `log/` by default.
 
 ## Run From Source With Docker Compose
 

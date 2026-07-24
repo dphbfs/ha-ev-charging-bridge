@@ -1,36 +1,12 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 )
-
-func appendSession(path string, completed session) error {
-	encoded, err := json.Marshal(completed)
-	if err != nil {
-		return fmt.Errorf("encode session: %w", err)
-	}
-	if err := appendJSONLine(path, encoded); err != nil {
-		return fmt.Errorf("write session: %w", err)
-	}
-	return nil
-}
-
-func writeSession(path string, value session) error {
-	encoded, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode session: %w", err)
-	}
-	if err := os.WriteFile(path, append(encoded, '\n'), 0600); err != nil {
-		return fmt.Errorf("write session: %w", err)
-	}
-	return nil
-}
 
 func appendJSONLine(path string, payload []byte) error {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)

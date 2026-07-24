@@ -152,8 +152,7 @@ retention:
 runtime:
   device_config: devices.yaml
   ingress_store: var/ingress-events.jsonl
-  active_session_store: var/current-session.json
-  session_store: var/sessions.jsonl
+  database_path: var/bridge.db
   log_file: log/app.log
 `
 }
