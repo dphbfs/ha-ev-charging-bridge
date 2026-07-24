@@ -10,6 +10,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	bridgeconfig "ha-ev-charging-bridge/internal/config"
+	"ha-ev-charging-bridge/internal/homeassistant"
 )
 
 type session struct {
@@ -30,7 +33,7 @@ type session struct {
 }
 
 type smartPlugHandler struct {
-	cfg              config
+	cfg              bridgeconfig.Runtime
 	device           deviceConfig
 	active           *session
 	latestEnergyKWh  *float64
@@ -39,11 +42,11 @@ type smartPlugHandler struct {
 	endTimer         *time.Timer
 }
 
-func newSmartPlugHandler(cfg config, device deviceConfig) *smartPlugHandler {
+func newSmartPlugHandler(cfg bridgeconfig.Runtime, device deviceConfig) *smartPlugHandler {
 	return &smartPlugHandler{cfg: cfg, device: device}
 }
 
-func (h *smartPlugHandler) initialize(states []haState) error {
+func (h *smartPlugHandler) initialize(states []homeassistant.State) error {
 	for _, state := range states {
 		switch state.EntityID {
 		case h.device.EnergyEntityID:
@@ -96,7 +99,7 @@ func (h *smartPlugHandler) loadActive() error {
 }
 
 func (h *smartPlugHandler) handleEvent(payload []byte) error {
-	var msg haEventMessage
+	var msg homeassistant.EventMessage
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&msg); err != nil {

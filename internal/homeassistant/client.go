@@ -1,4 +1,4 @@
-package main
+package homeassistant
 
 import (
 	"encoding/json"
@@ -11,22 +11,22 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-type authRequiredMessage struct {
+type AuthRequiredMessage struct {
 	Type string `json:"type"`
 }
 
-type authMessage struct {
+type AuthMessage struct {
 	Type        string `json:"type"`
 	AccessToken string `json:"access_token"`
 }
 
-type commandMessage struct {
+type CommandMessage struct {
 	ID        int    `json:"id"`
 	Type      string `json:"type"`
 	EventType string `json:"event_type,omitempty"`
 }
 
-type resultMessage struct {
+type ResultMessage struct {
 	ID      int             `json:"id"`
 	Type    string          `json:"type"`
 	Success bool            `json:"success"`
@@ -34,26 +34,26 @@ type resultMessage struct {
 	Error   json.RawMessage `json:"error,omitempty"`
 }
 
-type haState struct {
+type State struct {
 	EntityID    string          `json:"entity_id"`
 	State       string          `json:"state"`
 	LastChanged time.Time       `json:"last_changed"`
 	Raw         json.RawMessage `json:"-"`
 }
 
-type haEventMessage struct {
+type EventMessage struct {
 	ID    int `json:"id"`
 	Event struct {
 		TimeFired time.Time `json:"time_fired"`
 		Data      struct {
-			EntityID string   `json:"entity_id"`
-			NewState *haState `json:"new_state"`
-			OldState *haState `json:"old_state"`
+			EntityID string `json:"entity_id"`
+			NewState *State `json:"new_state"`
+			OldState *State `json:"old_state"`
 		} `json:"data"`
 	} `json:"event"`
 }
 
-func websocketURL(raw string) (*url.URL, error) {
+func WebsocketURL(raw string) (*url.URL, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil {
 		return nil, fmt.Errorf("parse Home Assistant URL: %w", err)
@@ -79,8 +79,8 @@ func websocketURL(raw string) (*url.URL, error) {
 	return parsed, nil
 }
 
-func authenticate(conn *websocket.Conn, token string) error {
-	var authRequired authRequiredMessage
+func Authenticate(conn *websocket.Conn, token string) error {
+	var authRequired AuthRequiredMessage
 	if err := conn.ReadJSON(&authRequired); err != nil {
 		return fmt.Errorf("read auth_required message: %w", err)
 	}
@@ -88,7 +88,7 @@ func authenticate(conn *websocket.Conn, token string) error {
 		return fmt.Errorf("expected auth_required message, got %q", authRequired.Type)
 	}
 
-	if err := conn.WriteJSON(authMessage{Type: "auth", AccessToken: token}); err != nil {
+	if err := conn.WriteJSON(AuthMessage{Type: "auth", AccessToken: token}); err != nil {
 		return fmt.Errorf("send auth message: %w", err)
 	}
 
@@ -114,12 +114,12 @@ func authenticate(conn *websocket.Conn, token string) error {
 	return nil
 }
 
-func getStates(conn *websocket.Conn, id int) ([]haState, error) {
-	if err := conn.WriteJSON(commandMessage{ID: id, Type: "get_states"}); err != nil {
+func GetStates(conn *websocket.Conn, id int) ([]State, error) {
+	if err := conn.WriteJSON(CommandMessage{ID: id, Type: "get_states"}); err != nil {
 		return nil, fmt.Errorf("send get_states command: %w", err)
 	}
 
-	var result resultMessage
+	var result ResultMessage
 	if err := conn.ReadJSON(&result); err != nil {
 		return nil, fmt.Errorf("read get_states response: %w", err)
 	}
@@ -130,7 +130,7 @@ func getStates(conn *websocket.Conn, id int) ([]haState, error) {
 		return nil, fmt.Errorf("get_states failed: type=%q id=%d success=%t", result.Type, result.ID, result.Success)
 	}
 
-	var states []haState
+	var states []State
 	if err := json.Unmarshal(result.Result, &states); err != nil {
 		return nil, fmt.Errorf("parse get_states response: %w", err)
 	}
@@ -139,13 +139,13 @@ func getStates(conn *websocket.Conn, id int) ([]haState, error) {
 	return states, nil
 }
 
-func subscribe(conn *websocket.Conn, id int, eventType string) error {
-	cmd := commandMessage{ID: id, Type: "subscribe_events", EventType: strings.TrimSpace(eventType)}
+func Subscribe(conn *websocket.Conn, id int, eventType string) error {
+	cmd := CommandMessage{ID: id, Type: "subscribe_events", EventType: strings.TrimSpace(eventType)}
 	if err := conn.WriteJSON(cmd); err != nil {
 		return fmt.Errorf("send subscribe_events command: %w", err)
 	}
 
-	var result resultMessage
+	var result ResultMessage
 	if err := conn.ReadJSON(&result); err != nil {
 		return fmt.Errorf("read subscribe_events response: %w", err)
 	}
@@ -166,7 +166,7 @@ func subscribe(conn *websocket.Conn, id int, eventType string) error {
 	return nil
 }
 
-func readMessages(conn *websocket.Conn, messages chan<- []byte, errors chan<- error) {
+func ReadMessages(conn *websocket.Conn, messages chan<- []byte, errors chan<- error) {
 	for {
 		_, payload, err := conn.ReadMessage()
 		if err != nil {
@@ -177,7 +177,7 @@ func readMessages(conn *websocket.Conn, messages chan<- []byte, errors chan<- er
 	}
 }
 
-func logEvent(payload []byte) {
+func LogEvent(payload []byte) {
 	var pretty map[string]any
 	if err := json.Unmarshal(payload, &pretty); err != nil {
 		slog.Info("event raw", "payload", string(payload))

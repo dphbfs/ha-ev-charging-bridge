@@ -1,5 +1,5 @@
 devices:
-  - name: tesla_mobile_connector
+  - name: ev_charger_smart_plug
     type: smart_plug
-    entity_id: sensor.charger_plug_current_consumption
-    energy_entity_id: sensor.car_charger_energy
+    entity_id: sensor.ev_charger_power
+    energy_entity_id: sensor.ev_charger_energy

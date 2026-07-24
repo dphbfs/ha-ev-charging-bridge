@@ -8,9 +8,11 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	bridgeconfig "ha-ev-charging-bridge/internal/config"
+	"ha-ev-charging-bridge/internal/homeassistant"
 )
 
-func run(cfg config) error {
+func run(cfg bridgeconfig.Runtime) error {
 	if err := ensureParentDir(cfg.IngressStore); err != nil {
 		return fmt.Errorf("prepare ingress event store: %w", err)
 	}
@@ -40,7 +42,7 @@ func run(cfg config) error {
 	}
 	slog.Info("loaded smart plug device", "device", smartPlug.Name, "power_entity_id", smartPlug.EntityID, "energy_entity_id", smartPlug.EnergyEntityID)
 
-	wsURL, err := websocketURL(cfg.HAURL)
+	wsURL, err := homeassistant.WebsocketURL(cfg.HAURL)
 	if err != nil {
 		return err
 	}
@@ -52,11 +54,11 @@ func run(cfg config) error {
 	}
 	defer conn.Close()
 
-	if err := authenticate(conn, cfg.Token); err != nil {
+	if err := homeassistant.Authenticate(conn, cfg.Token); err != nil {
 		return err
 	}
 
-	states, err := getStates(conn, 1)
+	states, err := homeassistant.GetStates(conn, 1)
 	if err != nil {
 		return err
 	}
@@ -66,13 +68,13 @@ func run(cfg config) error {
 		return err
 	}
 
-	if err := subscribe(conn, 2, cfg.EventType); err != nil {
+	if err := homeassistant.Subscribe(conn, 2, cfg.EventType); err != nil {
 		return err
 	}
 
 	messages := make(chan []byte)
 	readErrors := make(chan error, 1)
-	go readMessages(conn, messages, readErrors)
+	go homeassistant.ReadMessages(conn, messages, readErrors)
 
 	for {
 		var timer <-chan time.Time
@@ -85,7 +87,7 @@ func run(cfg config) error {
 			if err := appendJSONLine(cfg.IngressStore, payload); err != nil {
 				slog.Warn("ingress event write failed", "error", err)
 			}
-			logEvent(payload)
+			homeassistant.LogEvent(payload)
 			if err := sessionTracker.handleEvent(payload); err != nil {
 				slog.Warn("session tracking failed", "error", err)
 			}
