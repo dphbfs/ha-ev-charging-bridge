@@ -40,3 +40,11 @@ This repository is only the bridge component. A later external system will recei
 - Prefer tests around event mapping and session boundary logic.
 - Prefer commands documented in the repo, such as `README.md`, `Makefile`, or package scripts.
 - If no verification command exists yet, state exactly what was manually checked.
+
+## Git Commit Pattern
+
+- Use concise Conventional Commit-style messages: `<type>: <summary>`.
+- Prefer these types: `feat`, `fix`, `docs`, `test`, `refactor`, `chore`.
+- Keep the summary imperative, lowercase unless naming a proper noun, and under 72 characters when practical.
+- Use a body only when the rationale or verification is not obvious from the diff.
+- Example: `feat: add configurable home assistant entity filters`.
