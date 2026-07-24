@@ -13,8 +13,8 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: Test And Lint
+  quality:
+    name: Quality
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -29,11 +29,6 @@ jobs:
       - name: Verify gofmt
         run: test -z "$(gofmt -l .)"
 
-      - name: Run tests with coverage
-        env:
-          CGO_ENABLED: 1
-        run: go test -coverprofile=coverage.out ./...
-
       - name: Run go vet
         env:
           CGO_ENABLED: 1
@@ -43,6 +38,11 @@ jobs:
         uses: golangci/golangci-lint-action@v6
         with:
           args: ./...
+
+      - name: Run tests with coverage
+        env:
+          CGO_ENABLED: 1
+        run: go test -coverprofile=coverage.out ./...
 
       - name: Print coverage summary
         run: go tool cover -func=coverage.out
