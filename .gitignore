@@ -1,0 +1,5 @@
+.env
+log/*
+var/*
+!log/.gitkeep
+!var/.gitkeep
