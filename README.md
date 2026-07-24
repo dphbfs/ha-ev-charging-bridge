@@ -49,9 +49,7 @@ Use this mode when developing or testing the app from source in a containerized 
 
 ## Configuration
 
-V1 application settings are configured in `config.yaml`. Home Assistant connection values use environment interpolation, so secrets such as `HA_TOKEN` stay in `.env` or the process environment.
-
-The current runtime still reads `devices.yaml` for the legacy smart-plug POC path while the v1 package split is underway.
+V1 application settings are configured in `config.yaml`, including charger entity mappings. Home Assistant connection values use environment interpolation, so secrets such as `HA_TOKEN` stay in `.env` or the process environment.
 
 Connection settings and runtime paths can be provided through `.env` or process environment variables. Do not commit real Home Assistant tokens.
 

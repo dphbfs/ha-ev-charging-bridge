@@ -150,8 +150,6 @@ retention:
   lifecycle_events: 365d
   raw_events: 7d
 runtime:
-  device_config: devices.yaml
-  ingress_store: var/ingress-events.jsonl
   database_path: var/bridge.db
   log_file: log/app.log
 `
