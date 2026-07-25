@@ -272,6 +272,29 @@ Verification:
 3. Completed sessions persisted by the V1 path include configured charger identity, meter ID, start/end timestamps, and energy consumption when energy values are available.
 4. `go test ./...` passes.
 
+### Task 13: Manually Test Live Charging Sessions
+
+Validate the V1 runtime against real Home Assistant charger events and SQLite persistence.
+
+Manual test flow:
+
+1. Confirm `config.yaml` uses real Home Assistant entity IDs for power, cumulative energy, availability, start/stop detection, and meters.
+2. Start the app with a clean or known SQLite database path.
+3. Start the app while the car is already charging and verify an active session is created from initial Home Assistant state.
+4. Start a new charging session after the app is already running and verify the power threshold creates an active session after the configured start duration.
+5. While charging, verify meter values are persisted for the active session.
+6. Stop charging and verify the active session is moved to completed sessions after the configured stop duration.
+7. Verify lifecycle events include `session_started`, `session_updated`, and `session_ended` for the session.
+8. Toggle or observe charger plug availability and verify unavailable behavior does not incorrectly end normal charging sessions.
+
+Verification:
+
+1. `active_sessions` contains one row while the car is charging.
+2. `completed_sessions` contains the finished session after charging stops.
+3. `meter_values` contains power and energy values linked to the session ID.
+4. `session_events` contains expected lifecycle rows for the session ID.
+5. App logs show no `v1 event processing failed` messages during the manual flow.
+
 ### Phase 1 Completion Criteria
 
 Phase 1 is complete when:
