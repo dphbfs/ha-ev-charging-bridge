@@ -10,11 +10,11 @@ chargers:
     connector_id: connector-1
     meter_id: meter-1
     entities:
-      power_w: sensor.ev_charger_power
-      energy_kwh: sensor.ev_charger_energy
-      availability: binary_sensor.ev_charger_online
+      power_w: sensor.sensor.charger_plug_current_consumption
+      energy_kwh: sensor.car_charger_energy
+      availability: switch.charger_plug
       fault: sensor.ev_charger_fault
-      plug: binary_sensor.ev_connector_plugged
+      plug: switch.charger_plug
     availability:
       entity_id: binary_sensor.ev_charger_online
       available_state: "on"
@@ -24,7 +24,7 @@ chargers:
       type: power_threshold
       entity_id: sensor.ev_charger_power
       threshold_w: 200
-      duration: 0s
+      duration: 10s
     stop:
       type: power_threshold
       entity_id: sensor.ev_charger_power
