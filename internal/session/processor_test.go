@@ -41,6 +41,13 @@ func TestApplyEndsSessionFromChargingStopped(t *testing.T) {
 	if _, ok := p.Active("charger-1"); ok {
 		t.Fatal("Active() ok = true, want no active session")
 	}
+	completed, ok := p.Completed(got[0].SessionID)
+	if !ok {
+		t.Fatal("Completed() ok = false, want completed session")
+	}
+	if completed.MeterID != "meter-1" || completed.EndedAt == nil {
+		t.Fatalf("Completed() = %#v, want meter ID and ended_at", completed)
+	}
 }
 
 func TestApplyEndsSessionFromChargerUnavailable(t *testing.T) {
@@ -98,6 +105,7 @@ func chargerEvent(eventType events.ChargerEventType, at time.Time, energyKWh *fl
 		ChargerID:   "charger-1",
 		EVSEID:      "evse-1",
 		ConnectorID: "connector-1",
+		MeterID:     "meter-1",
 		OccurredAt:  at,
 		EnergyKWh:   energyKWh,
 	}

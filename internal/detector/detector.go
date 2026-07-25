@@ -22,6 +22,8 @@ type Detector struct {
 	aboveStartSince     *time.Time
 	belowStopSince      *time.Time
 	unavailableSince    *time.Time
+	lastPowerEntityID   string
+	lastAvailabilityID  string
 }
 
 type State struct {
@@ -70,6 +72,7 @@ func (d *Detector) Detect(msg homeassistant.EventMessage, state State) ([]events
 		if err != nil {
 			return nil, nil
 		}
+		d.lastPowerEntityID = entityID
 		return d.detectPower(entityID, powerW, at, state), nil
 	case d.charger.Entities.EnergyKWh:
 		energyKWh, err := parseStateFloat(msg.Event.Data.NewState.State)
@@ -78,10 +81,42 @@ func (d *Detector) Detect(msg homeassistant.EventMessage, state State) ([]events
 		}
 		return []events.ChargerEvent{d.event(events.MeterValueObserved, entityID, at, nil, &energyKWh, "")}, nil
 	case d.charger.Availability.EntityID, d.charger.Entities.Availability:
+		d.lastAvailabilityID = entityID
 		return d.detectAvailability(entityID, msg.Event.Data.NewState.State, at), nil
 	}
 
 	return nil, nil
+}
+
+func (d *Detector) Deadline(state State) (time.Time, bool) {
+	var deadline time.Time
+	if !state.ActiveSession && d.aboveStartSince != nil {
+		deadline = d.aboveStartSince.Add(d.startDuration)
+	}
+	if state.ActiveSession && d.belowStopSince != nil {
+		deadline = earliest(deadline, d.belowStopSince.Add(d.stopDuration))
+	}
+	if d.unavailableSince != nil {
+		deadline = earliest(deadline, d.unavailableSince.Add(d.unavailableDuration))
+	}
+	return deadline, !deadline.IsZero()
+}
+
+func (d *Detector) Advance(at time.Time, state State) []events.ChargerEvent {
+	var result []events.ChargerEvent
+	if !state.ActiveSession && d.aboveStartSince != nil && !at.Before(d.aboveStartSince.Add(d.startDuration)) {
+		result = append(result, d.event(events.ChargingStarted, d.lastPowerEntityID, at, nil, nil, ""))
+		d.aboveStartSince = nil
+	}
+	if state.ActiveSession && d.belowStopSince != nil && !at.Before(d.belowStopSince.Add(d.stopDuration)) {
+		result = append(result, d.event(events.ChargingStopped, d.lastPowerEntityID, at, nil, nil, ""))
+		d.belowStopSince = nil
+	}
+	if d.unavailableSince != nil && !at.Before(d.unavailableSince.Add(d.unavailableDuration)) {
+		result = append(result, d.event(events.ChargerUnavailable, d.lastAvailabilityID, at, nil, nil, "charger_unavailable"))
+		d.unavailableSince = nil
+	}
+	return result
 }
 
 func (d *Detector) detectPower(entityID string, powerW float64, at time.Time, state State) []events.ChargerEvent {
@@ -141,6 +176,7 @@ func (d *Detector) event(eventType events.ChargerEventType, entityID string, at 
 		ChargerID:   d.charger.ChargerID,
 		EVSEID:      d.charger.EVSEID,
 		ConnectorID: d.charger.ConnectorID,
+		MeterID:     d.charger.MeterID,
 		EntityID:    entityID,
 		OccurredAt:  at,
 		PowerW:      powerW,
@@ -169,4 +205,11 @@ func eventTime(value time.Time) time.Time {
 		return time.Now()
 	}
 	return value
+}
+
+func earliest(current, candidate time.Time) time.Time {
+	if current.IsZero() || candidate.Before(current) {
+		return candidate
+	}
+	return current
 }

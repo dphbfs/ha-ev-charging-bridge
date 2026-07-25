@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"ha-ev-charging-bridge/internal/app"
 	bridgeconfig "ha-ev-charging-bridge/internal/config"
 	"ha-ev-charging-bridge/internal/homeassistant"
 	"ha-ev-charging-bridge/internal/persistence"
@@ -35,7 +36,8 @@ func run(cfg bridgeconfig.Runtime) error {
 		return err
 	}
 	defer store.Close()
-	if err := store.SaveCharger(ctx, cfg.Charger); err != nil {
+	pipeline, err := app.NewPipeline(ctx, cfg.Charger, store)
+	if err != nil {
 		return err
 	}
 
@@ -59,9 +61,7 @@ func run(cfg bridgeconfig.Runtime) error {
 	if err != nil {
 		return err
 	}
-
-	sessionTracker := newSmartPlugHandler(cfg, cfg.Charger, store)
-	if err := sessionTracker.initialize(states); err != nil {
+	if err := pipeline.InitializeStates(ctx, states); err != nil {
 		return err
 	}
 
@@ -75,21 +75,28 @@ func run(cfg bridgeconfig.Runtime) error {
 
 	for {
 		var timer <-chan time.Time
-		if sessionTracker.endTimer != nil {
-			timer = sessionTracker.endTimer.C
+		if deadline, ok := pipeline.Deadline(); ok {
+			delay := time.Until(deadline)
+			if delay <= 0 {
+				if _, err := pipeline.Advance(ctx, time.Now()); err != nil {
+					slog.Warn("v1 event processing failed", "error", err)
+				}
+				continue
+			}
+			timer = time.After(delay)
 		}
 
 		select {
 		case payload := <-messages:
 			homeassistant.LogEvent(payload)
-			if err := sessionTracker.handleEvent(payload); err != nil {
-				slog.Warn("session tracking failed", "error", err)
+			if _, err := pipeline.ProcessPayload(ctx, payload); err != nil {
+				slog.Warn("v1 event processing failed", "error", err)
 			}
 		case err := <-readErrors:
 			return err
-		case <-timer:
-			if err := sessionTracker.finishAfterDebounce(); err != nil {
-				slog.Warn("session tracking failed", "error", err)
+		case at := <-timer:
+			if _, err := pipeline.Advance(ctx, at); err != nil {
+				slog.Warn("v1 event processing failed", "error", err)
 			}
 		}
 	}

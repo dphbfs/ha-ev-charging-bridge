@@ -10,13 +10,11 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"ha-ev-charging-bridge/internal/app"
 	bridgeconfig "ha-ev-charging-bridge/internal/config"
-	"ha-ev-charging-bridge/internal/detector"
 	"ha-ev-charging-bridge/internal/events"
 	"ha-ev-charging-bridge/internal/homeassistant"
 	"ha-ev-charging-bridge/internal/persistence"
-	"ha-ev-charging-bridge/internal/router"
-	"ha-ev-charging-bridge/internal/session"
 )
 
 func TestSimulatedHomeAssistantFlowCompletesSession(t *testing.T) {
@@ -31,16 +29,10 @@ func TestSimulatedHomeAssistantFlowCompletesSession(t *testing.T) {
 	}
 	defer store.Close()
 
-	det, err := detector.New(charger)
+	pipeline, err := app.NewPipeline(ctx, charger, store)
 	if err != nil {
-		t.Fatalf("detector.New() error = %v", err)
+		t.Fatalf("NewPipeline() error = %v", err)
 	}
-	sessions := session.NewProcessor()
-	r, err := router.New([]string{charger.Entities.PowerW, charger.Entities.EnergyKWh}, 1)
-	if err != nil {
-		t.Fatalf("router.New() error = %v", err)
-	}
-	channels := r.Channels()
 
 	wsURL, err := homeassistant.WebsocketURL(server.URL)
 	if err != nil {
@@ -55,6 +47,13 @@ func TestSimulatedHomeAssistantFlowCompletesSession(t *testing.T) {
 	if err := homeassistant.Authenticate(conn, "test-token"); err != nil {
 		t.Fatalf("Authenticate() error = %v", err)
 	}
+	states, err := homeassistant.GetStates(conn, 1)
+	if err != nil {
+		t.Fatalf("GetStates() error = %v", err)
+	}
+	if err := pipeline.InitializeStates(ctx, states); err != nil {
+		t.Fatalf("InitializeStates() error = %v", err)
+	}
 	if err := homeassistant.Subscribe(conn, 1, "state_changed"); err != nil {
 		t.Fatalf("Subscribe() error = %v", err)
 	}
@@ -67,11 +66,11 @@ func TestSimulatedHomeAssistantFlowCompletesSession(t *testing.T) {
 	for completedSessionID == "" {
 		select {
 		case payload := <-messages:
-			completedSessionID = processPayload(t, ctx, payload, r, channels, det, sessions, store)
+			completedSessionID = processPayload(t, ctx, payload, pipeline)
 		case err := <-readErrors:
 			select {
 			case payload := <-messages:
-				completedSessionID = processPayload(t, ctx, payload, r, channels, det, sessions, store)
+				completedSessionID = processPayload(t, ctx, payload, pipeline)
 			default:
 				t.Fatalf("ReadMessages() error = %v", err)
 			}
@@ -89,6 +88,12 @@ func TestSimulatedHomeAssistantFlowCompletesSession(t *testing.T) {
 	}
 	if completed.State != events.SessionEndedState {
 		t.Fatalf("completed.State = %q, want ended", completed.State)
+	}
+	if completed.ChargerID != charger.ChargerID || completed.EVSEID != charger.EVSEID || completed.ConnectorID != charger.ConnectorID || completed.MeterID != charger.MeterID {
+		t.Fatalf("completed identity = %#v, want configured charger identity", completed)
+	}
+	if completed.StartEnergyKWh == nil || completed.EndEnergyKWh == nil || completed.EnergyConsumedKWh == nil {
+		t.Fatalf("completed energy fields = start %v end %v consumed %v, want all populated", completed.StartEnergyKWh, completed.EndEnergyKWh, completed.EnergyConsumedKWh)
 	}
 
 	meterValues, err := store.MeterValues(ctx, completedSessionID)
@@ -108,88 +113,13 @@ func TestSimulatedHomeAssistantFlowCompletesSession(t *testing.T) {
 	}
 }
 
-func processPayload(t *testing.T, ctx context.Context, payload []byte, r *router.Router, channels map[string]<-chan homeassistant.EventMessage, det *detector.Detector, sessions *session.Processor, store *persistence.Store) string {
+func processPayload(t *testing.T, ctx context.Context, payload []byte, pipeline *app.Pipeline) string {
 	t.Helper()
-	var msg homeassistant.EventMessage
-	if err := json.Unmarshal(payload, &msg); err != nil {
-		t.Fatalf("parse websocket event: %v", err)
-	}
-	if _, err := r.Route(ctx, msg); err != nil {
-		t.Fatalf("Route() error = %v", err)
-	}
-	return drainRoutedEvents(t, ctx, channels, det, sessions, store)
-}
-
-func drainRoutedEvents(t *testing.T, ctx context.Context, channels map[string]<-chan homeassistant.EventMessage, det *detector.Detector, sessions *session.Processor, store *persistence.Store) string {
-	t.Helper()
-	for {
-		select {
-		case msg := <-channels["sensor.ev_charger_power"]:
-			if completed := handleEntityEvent(t, ctx, msg, det, sessions, store); completed != "" {
-				return completed
-			}
-		case msg := <-channels["sensor.ev_charger_energy"]:
-			if completed := handleEntityEvent(t, ctx, msg, det, sessions, store); completed != "" {
-				return completed
-			}
-		default:
-			return ""
-		}
-	}
-}
-
-func handleEntityEvent(t *testing.T, ctx context.Context, msg homeassistant.EventMessage, det *detector.Detector, sessions *session.Processor, store *persistence.Store) string {
-	t.Helper()
-	_, active := sessions.Active("charger-1")
-	chargerEvents, err := det.Detect(msg, detector.State{ActiveSession: active})
+	completed, err := pipeline.ProcessPayload(ctx, payload)
 	if err != nil {
-		t.Fatalf("Detect() error = %v", err)
+		t.Fatalf("ProcessPayload() error = %v", err)
 	}
-
-	for _, chargerEvent := range chargerEvents {
-		if chargerEvent.Type == events.MeterValueObserved {
-			if activeSession, ok := sessions.Active(chargerEvent.ChargerID); ok {
-				if err := store.SaveMeterValue(ctx, meterValueFromChargerEvent(chargerEvent, activeSession.ID)); err != nil {
-					t.Fatalf("SaveMeterValue() error = %v", err)
-				}
-			}
-		}
-
-		sessionEvents, err := sessions.Apply(chargerEvent)
-		if err != nil {
-			t.Fatalf("Apply() error = %v", err)
-		}
-		for _, sessionEvent := range sessionEvents {
-			if err := store.SaveSessionEvent(ctx, sessionEvent); err != nil {
-				t.Fatalf("SaveSessionEvent() error = %v", err)
-			}
-			if sessionEvent.Type == events.SessionStarted {
-				activeSession, ok := sessions.Active(chargerEvent.ChargerID)
-				if !ok {
-					t.Fatal("session_started emitted without active session")
-				}
-				if err := store.SaveActiveSession(ctx, *activeSession); err != nil {
-					t.Fatalf("SaveActiveSession() error = %v", err)
-				}
-			}
-			if sessionEvent.Type == events.SessionEnded {
-				completed := events.Session{
-					ID:          sessionEvent.SessionID,
-					ChargerID:   sessionEvent.ChargerID,
-					EVSEID:      chargerEvent.EVSEID,
-					ConnectorID: chargerEvent.ConnectorID,
-					State:       events.SessionEndedState,
-					StartedAt:   sessionEvent.OccurredAt.Add(-time.Minute),
-					EndedAt:     &sessionEvent.OccurredAt,
-				}
-				if err := store.SaveCompletedSession(ctx, completed); err != nil {
-					t.Fatalf("SaveCompletedSession() error = %v", err)
-				}
-				return sessionEvent.SessionID
-			}
-		}
-	}
-	return ""
+	return completed
 }
 
 func simulatedHAServer(t *testing.T) *httptest.Server {
@@ -206,6 +136,17 @@ func simulatedHAServer(t *testing.T) *httptest.Server {
 		var auth homeassistant.AuthMessage
 		readJSON(t, conn, &auth)
 		writeJSON(t, conn, map[string]any{"type": "auth_ok"})
+		var getStates homeassistant.CommandMessage
+		readJSON(t, conn, &getStates)
+		states, err := json.Marshal([]homeassistant.State{
+			{EntityID: "sensor.ev_charger_power", State: "0", LastChanged: time.Date(2026, 7, 24, 11, 59, 0, 0, time.UTC)},
+			{EntityID: "sensor.ev_charger_energy", State: "10.0", LastChanged: time.Date(2026, 7, 24, 11, 59, 0, 0, time.UTC)},
+		})
+		if err != nil {
+			t.Fatalf("marshal states: %v", err)
+		}
+		writeJSON(t, conn, homeassistant.ResultMessage{ID: getStates.ID, Type: "result", Success: true, Result: states})
+
 		var sub homeassistant.CommandMessage
 		readJSON(t, conn, &sub)
 		writeJSON(t, conn, homeassistant.ResultMessage{ID: sub.ID, Type: "result", Success: true})
@@ -230,27 +171,6 @@ func haEvent(entityID, state string, at time.Time) map[string]any {
 				},
 			},
 		},
-	}
-}
-
-func meterValueFromChargerEvent(event events.ChargerEvent, sessionID string) events.MeterValue {
-	value := 0.0
-	unit := "W"
-	if event.EnergyKWh != nil {
-		value = *event.EnergyKWh
-		unit = "kWh"
-	}
-	if event.PowerW != nil {
-		value = *event.PowerW
-	}
-	return events.MeterValue{
-		SessionID:  sessionID,
-		ChargerID:  event.ChargerID,
-		MeterID:    "meter-1",
-		EntityID:   event.EntityID,
-		Unit:       unit,
-		Value:      value,
-		ObservedAt: event.OccurredAt,
 	}
 }
 
