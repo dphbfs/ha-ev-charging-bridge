@@ -65,7 +65,7 @@ func NewPipeline(ctx context.Context, charger bridgeconfig.Charger, store *persi
 }
 
 func (p *Pipeline) InitializeStates(ctx context.Context, states []homeassistant.State) error {
-	_ = ctx
+	var powerState *homeassistant.State
 	for _, state := range states {
 		value, err := parseStateFloat(state.State)
 		if err != nil {
@@ -74,9 +74,19 @@ func (p *Pipeline) InitializeStates(ctx context.Context, states []homeassistant.
 		switch state.EntityID {
 		case p.charger.Entities.PowerW, p.charger.Start.EntityID, p.charger.Stop.EntityID:
 			p.latestPower = &value
+			copy := state
+			powerState = &copy
 		case p.charger.Entities.EnergyKWh:
 			p.latestEnergy = &value
 		}
+	}
+	if powerState != nil {
+		msg := homeassistant.EventMessage{}
+		msg.Event.TimeFired = powerState.LastChanged
+		msg.Event.Data.EntityID = powerState.EntityID
+		msg.Event.Data.NewState = powerState
+		_, err := p.processEvent(ctx, msg)
+		return err
 	}
 	return nil
 }
