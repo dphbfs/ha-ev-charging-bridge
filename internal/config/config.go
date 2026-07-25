@@ -30,7 +30,7 @@ type Runtime struct {
 	HAURL           string
 	Token           string
 	EventType       string
-	Charger         Charger
+	Chargers        []Charger
 	StartThresholdW float64
 	EndThresholdW   float64
 	EndDebounce     time.Duration
@@ -309,7 +309,7 @@ func (c V1) toRuntime() *Runtime {
 		HAURL:        c.HomeAssistant.URL,
 		Token:        c.HomeAssistant.Token,
 		EventType:    DefaultEventType,
-		Charger:      c.Chargers[0],
+		Chargers:     append([]Charger(nil), c.Chargers...),
 		DatabasePath: envOrValue(c.Runtime.DatabasePath, defaultDatabasePath),
 		LogFile:      envOrValue(c.Runtime.LogFile, defaultLogFilePath),
 	}
@@ -340,10 +340,19 @@ func mergeRuntimeConfig(current Runtime, loaded Runtime) Runtime {
 			loaded.EventType = current.EventType
 		case "start-threshold-w":
 			loaded.StartThresholdW = current.StartThresholdW
+			for i := range loaded.Chargers {
+				loaded.Chargers[i].Start.ThresholdW = current.StartThresholdW
+			}
 		case "end-threshold-w":
 			loaded.EndThresholdW = current.EndThresholdW
+			for i := range loaded.Chargers {
+				loaded.Chargers[i].Stop.ThresholdW = current.EndThresholdW
+			}
 		case "end-debounce":
 			loaded.EndDebounce = current.EndDebounce
+			for i := range loaded.Chargers {
+				loaded.Chargers[i].Stop.Duration = current.EndDebounce.String()
+			}
 		case "database":
 			loaded.DatabasePath = current.DatabasePath
 		case "log-file":

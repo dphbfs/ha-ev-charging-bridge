@@ -26,19 +26,26 @@ func run(cfg bridgeconfig.Runtime) error {
 	if strings.TrimSpace(cfg.Token) == "" {
 		return errors.New("missing Home Assistant token: set HA_TOKEN or pass -token")
 	}
-	if strings.TrimSpace(cfg.Charger.ChargerID) == "" {
+	if len(cfg.Chargers) == 0 {
 		return errors.New("missing charger configuration: define at least one charger in config.yaml")
 	}
-	slog.Info("loaded charger", "charger", cfg.Charger.ChargerID, "power_entity_id", cfg.Charger.Entities.PowerW, "energy_entity_id", cfg.Charger.Entities.EnergyKWh)
 	ctx := context.Background()
 	store, err := persistence.Open(ctx, cfg.DatabasePath)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
-	pipeline, err := app.NewPipeline(ctx, cfg.Charger, store)
-	if err != nil {
-		return err
+	pipelines := make([]*app.Pipeline, 0, len(cfg.Chargers))
+	for _, charger := range cfg.Chargers {
+		if strings.TrimSpace(charger.ChargerID) == "" {
+			return errors.New("missing charger configuration: define charger_id in config.yaml")
+		}
+		slog.Info("loaded charger", "charger", charger.ChargerID, "power_entity_id", charger.Entities.PowerW, "energy_entity_id", charger.Entities.EnergyKWh)
+		pipeline, err := app.NewPipeline(ctx, charger, store)
+		if err != nil {
+			return err
+		}
+		pipelines = append(pipelines, pipeline)
 	}
 
 	wsURL, err := homeassistant.WebsocketURL(cfg.HAURL)
@@ -61,8 +68,10 @@ func run(cfg bridgeconfig.Runtime) error {
 	if err != nil {
 		return err
 	}
-	if err := pipeline.InitializeStates(ctx, states); err != nil {
-		return err
+	for _, pipeline := range pipelines {
+		if err := pipeline.InitializeStates(ctx, states); err != nil {
+			return err
+		}
 	}
 
 	if err := homeassistant.Subscribe(conn, 2, cfg.EventType); err != nil {
@@ -75,11 +84,13 @@ func run(cfg bridgeconfig.Runtime) error {
 
 	for {
 		var timer <-chan time.Time
-		if deadline, ok := pipeline.Deadline(); ok {
+		if deadline, ok := nextDeadline(pipelines); ok {
 			delay := time.Until(deadline)
 			if delay <= 0 {
-				if _, err := pipeline.Advance(ctx, time.Now()); err != nil {
-					slog.Warn("v1 event processing failed", "error", err)
+				for _, pipeline := range pipelines {
+					if _, err := pipeline.Advance(ctx, time.Now()); err != nil {
+						slog.Warn("v1 event processing failed", "error", err)
+					}
 				}
 				continue
 			}
@@ -89,15 +100,33 @@ func run(cfg bridgeconfig.Runtime) error {
 		select {
 		case payload := <-messages:
 			homeassistant.LogEvent(payload)
-			if _, err := pipeline.ProcessPayload(ctx, payload); err != nil {
-				slog.Warn("v1 event processing failed", "error", err)
+			for _, pipeline := range pipelines {
+				if _, err := pipeline.ProcessPayload(ctx, payload); err != nil {
+					slog.Warn("v1 event processing failed", "error", err)
+				}
 			}
 		case err := <-readErrors:
 			return err
 		case at := <-timer:
-			if _, err := pipeline.Advance(ctx, at); err != nil {
-				slog.Warn("v1 event processing failed", "error", err)
+			for _, pipeline := range pipelines {
+				if _, err := pipeline.Advance(ctx, at); err != nil {
+					slog.Warn("v1 event processing failed", "error", err)
+				}
 			}
 		}
 	}
+}
+
+func nextDeadline(pipelines []*app.Pipeline) (time.Time, bool) {
+	var next time.Time
+	for _, pipeline := range pipelines {
+		deadline, ok := pipeline.Deadline()
+		if !ok {
+			continue
+		}
+		if next.IsZero() || deadline.Before(next) {
+			next = deadline
+		}
+	}
+	return next, !next.IsZero()
 }
