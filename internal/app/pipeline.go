@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -35,7 +34,7 @@ func NewPipeline(ctx context.Context, charger bridgeconfig.Charger, store *persi
 	if err != nil {
 		return nil, fmt.Errorf("initialize charger detector: %w", err)
 	}
-	r, err := router.New(entityIDs(charger), 8)
+	r, err := router.New(EntityIDs(charger), 8)
 	if err != nil {
 		return nil, fmt.Errorf("initialize event router: %w", err)
 	}
@@ -92,11 +91,11 @@ func (p *Pipeline) InitializeStates(ctx context.Context, states []homeassistant.
 }
 
 func (p *Pipeline) ProcessPayload(ctx context.Context, payload []byte) (string, error) {
-	var msg homeassistant.EventMessage
-	if err := json.Unmarshal(payload, &msg); err != nil {
+	msg, ok, err := homeassistant.ParseEventMessage(payload)
+	if err != nil {
 		return "", nil
 	}
-	if msg.Event.Data.EntityID == "" && msg.Event.Data.NewState == nil {
+	if !ok {
 		return "", nil
 	}
 
@@ -247,7 +246,7 @@ func (p *Pipeline) applyLatest(event events.ChargerEvent) {
 	}
 }
 
-func entityIDs(charger bridgeconfig.Charger) []string {
+func EntityIDs(charger bridgeconfig.Charger) []string {
 	values := []string{
 		charger.Start.EntityID,
 		charger.Stop.EntityID,

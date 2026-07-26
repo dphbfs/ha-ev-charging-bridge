@@ -54,8 +54,8 @@ func TestSimulatedHomeAssistantFlowCompletesSession(t *testing.T) {
 	if err := pipeline.InitializeStates(ctx, states); err != nil {
 		t.Fatalf("InitializeStates() error = %v", err)
 	}
-	if err := homeassistant.Subscribe(conn, 1, "state_changed"); err != nil {
-		t.Fatalf("Subscribe() error = %v", err)
+	if err := homeassistant.SubscribeStateChanges(conn, 2, app.EntityIDs(charger)); err != nil {
+		t.Fatalf("SubscribeStateChanges() error = %v", err)
 	}
 
 	messages := make(chan []byte, 8)
@@ -149,25 +149,34 @@ func simulatedHAServer(t *testing.T) *httptest.Server {
 
 		var sub homeassistant.CommandMessage
 		readJSON(t, conn, &sub)
+		if sub.Type != "subscribe_trigger" || sub.Trigger == nil {
+			t.Fatalf("subscribe command = %#v, want state trigger", sub)
+		}
 		writeJSON(t, conn, homeassistant.ResultMessage{ID: sub.ID, Type: "result", Success: true})
 
 		base := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
-		writeJSON(t, conn, haEvent("sensor.ev_charger_power", "250", base))
-		writeJSON(t, conn, haEvent("sensor.ev_charger_energy", "10.5", base.Add(30*time.Second)))
-		writeJSON(t, conn, haEvent("sensor.ev_charger_power", "40", base.Add(time.Minute)))
+		writeJSON(t, conn, haTriggerEvent("sensor.ev_charger_power", "250", base))
+		writeJSON(t, conn, haTriggerEvent("sensor.ev_charger_energy", "10.5", base.Add(30*time.Second)))
+		writeJSON(t, conn, haTriggerEvent("sensor.ev_charger_power", "40", base.Add(time.Minute)))
 	}))
 }
 
-func haEvent(entityID, state string, at time.Time) map[string]any {
+func haTriggerEvent(entityID, state string, at time.Time) map[string]any {
 	return map[string]any{
 		"event": map[string]any{
-			"time_fired": at.Format(time.RFC3339Nano),
-			"data": map[string]any{
-				"entity_id": entityID,
-				"new_state": map[string]any{
-					"entity_id":    entityID,
-					"state":        state,
-					"last_changed": at.Format(time.RFC3339Nano),
+			"variables": map[string]any{
+				"trigger": map[string]any{
+					"entity_id": entityID,
+					"to_state": map[string]any{
+						"entity_id":    entityID,
+						"state":        state,
+						"last_changed": at.Format(time.RFC3339Nano),
+					},
+					"from_state": map[string]any{
+						"entity_id":    entityID,
+						"state":        "0",
+						"last_changed": at.Add(-time.Second).Format(time.RFC3339Nano),
+					},
 				},
 			},
 		},

@@ -21,9 +21,15 @@ type AuthMessage struct {
 }
 
 type CommandMessage struct {
-	ID        int    `json:"id"`
-	Type      string `json:"type"`
-	EventType string `json:"event_type,omitempty"`
+	ID        int           `json:"id"`
+	Type      string        `json:"type"`
+	EventType string        `json:"event_type,omitempty"`
+	Trigger   *StateTrigger `json:"trigger,omitempty"`
+}
+
+type StateTrigger struct {
+	Platform string   `json:"platform"`
+	EntityID []string `json:"entity_id"`
 }
 
 type ResultMessage struct {
@@ -50,6 +56,19 @@ type EventMessage struct {
 			NewState *State `json:"new_state"`
 			OldState *State `json:"old_state"`
 		} `json:"data"`
+	} `json:"event"`
+}
+
+type TriggerMessage struct {
+	ID    int `json:"id"`
+	Event struct {
+		Variables struct {
+			Trigger struct {
+				EntityID  string `json:"entity_id"`
+				FromState *State `json:"from_state"`
+				ToState   *State `json:"to_state"`
+			} `json:"trigger"`
+		} `json:"variables"`
 	} `json:"event"`
 }
 
@@ -141,22 +160,41 @@ func GetStates(conn *websocket.Conn, id int) ([]State, error) {
 
 func Subscribe(conn *websocket.Conn, id int, eventType string) error {
 	cmd := CommandMessage{ID: id, Type: "subscribe_events", EventType: strings.TrimSpace(eventType)}
+	return subscribe(conn, cmd)
+}
+
+func SubscribeStateChanges(conn *websocket.Conn, id int, entityIDs []string) error {
+	trimmed := uniqueEntityIDs(entityIDs)
+	cmd := CommandMessage{
+		ID:   id,
+		Type: "subscribe_trigger",
+		Trigger: &StateTrigger{
+			Platform: "state",
+			EntityID: trimmed,
+		},
+	}
+	return subscribe(conn, cmd)
+}
+
+func subscribe(conn *websocket.Conn, cmd CommandMessage) error {
 	if err := conn.WriteJSON(cmd); err != nil {
-		return fmt.Errorf("send subscribe_events command: %w", err)
+		return fmt.Errorf("send %s command: %w", cmd.Type, err)
 	}
 
 	var result ResultMessage
 	if err := conn.ReadJSON(&result); err != nil {
-		return fmt.Errorf("read subscribe_events response: %w", err)
+		return fmt.Errorf("read %s response: %w", cmd.Type, err)
 	}
 	if result.Type != "result" || result.ID != cmd.ID || !result.Success {
 		if len(result.Error) > 0 {
-			return fmt.Errorf("subscribe_events failed: %s", result.Error)
+			return fmt.Errorf("%s failed: %s", cmd.Type, result.Error)
 		}
-		return fmt.Errorf("subscribe_events failed: type=%q id=%d success=%t", result.Type, result.ID, result.Success)
+		return fmt.Errorf("%s failed: type=%q id=%d success=%t", cmd.Type, result.Type, result.ID, result.Success)
 	}
 
-	if cmd.EventType == "" {
+	if cmd.Type == "subscribe_trigger" {
+		slog.Info("subscribed to configured Home Assistant entities", "entity_count", len(cmd.Trigger.EntityID))
+	} else if cmd.EventType == "" {
 		slog.Info("subscribed to all Home Assistant events")
 	} else {
 		slog.Info("subscribed to Home Assistant event type", "event_type", cmd.EventType)
@@ -164,6 +202,51 @@ func Subscribe(conn *websocket.Conn, id int, eventType string) error {
 
 	conn.SetReadLimit(10 * 1024 * 1024)
 	return nil
+}
+
+func ParseEventMessage(payload []byte) (EventMessage, bool, error) {
+	var msg EventMessage
+	if err := json.Unmarshal(payload, &msg); err != nil {
+		return EventMessage{}, false, err
+	}
+	if msg.Event.Data.EntityID != "" || msg.Event.Data.NewState != nil {
+		return msg, true, nil
+	}
+
+	var trigger TriggerMessage
+	if err := json.Unmarshal(payload, &trigger); err != nil {
+		return EventMessage{}, false, err
+	}
+	stateTrigger := trigger.Event.Variables.Trigger
+	if stateTrigger.EntityID == "" && stateTrigger.ToState == nil {
+		return EventMessage{}, false, nil
+	}
+
+	msg.ID = trigger.ID
+	if stateTrigger.ToState != nil {
+		msg.Event.TimeFired = stateTrigger.ToState.LastChanged
+	}
+	msg.Event.Data.EntityID = stateTrigger.EntityID
+	msg.Event.Data.NewState = stateTrigger.ToState
+	msg.Event.Data.OldState = stateTrigger.FromState
+	return msg, true, nil
+}
+
+func uniqueEntityIDs(entityIDs []string) []string {
+	seen := map[string]struct{}{}
+	result := []string{}
+	for _, entityID := range entityIDs {
+		entityID = strings.TrimSpace(entityID)
+		if entityID == "" {
+			continue
+		}
+		if _, ok := seen[entityID]; ok {
+			continue
+		}
+		seen[entityID] = struct{}{}
+		result = append(result, entityID)
+	}
+	return result
 }
 
 func ReadMessages(conn *websocket.Conn, messages chan<- []byte, errors chan<- error) {

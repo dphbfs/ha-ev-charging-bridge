@@ -133,6 +133,90 @@ func TestWebsocketAuthSubscribeAndEventDelivery(t *testing.T) {
 	}
 }
 
+func TestSubscribeStateChangesSendsConfiguredEntities(t *testing.T) {
+	server := newTestHAServer(t, func(t *testing.T, conn *websocket.Conn) {
+		var sub CommandMessage
+		readJSON(t, conn, &sub)
+		if sub.Type != "subscribe_trigger" {
+			t.Fatalf("Type = %q, want subscribe_trigger", sub.Type)
+		}
+		if sub.Trigger == nil {
+			t.Fatal("Trigger = nil, want state trigger")
+		}
+		if sub.Trigger.Platform != "state" {
+			t.Fatalf("Trigger.Platform = %q, want state", sub.Trigger.Platform)
+		}
+		want := []string{"sensor.ev_charger_power", "sensor.ev_charger_energy"}
+		if len(sub.Trigger.EntityID) != len(want) {
+			t.Fatalf("Trigger.EntityID = %#v, want %#v", sub.Trigger.EntityID, want)
+		}
+		for i := range want {
+			if sub.Trigger.EntityID[i] != want[i] {
+				t.Fatalf("Trigger.EntityID = %#v, want %#v", sub.Trigger.EntityID, want)
+			}
+		}
+		writeJSON(t, conn, ResultMessage{ID: sub.ID, Type: "result", Success: true})
+	})
+	defer server.Close()
+
+	conn := dialTestHA(t, server.URL)
+	defer conn.Close()
+
+	err := SubscribeStateChanges(conn, 2, []string{
+		" sensor.ev_charger_power ",
+		"sensor.ev_charger_energy",
+		"sensor.ev_charger_power",
+		"",
+	})
+	if err != nil {
+		t.Fatalf("SubscribeStateChanges() error = %v", err)
+	}
+}
+
+func TestParseEventMessageNormalizesStateTriggerPayload(t *testing.T) {
+	at := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	payload, err := json.Marshal(map[string]any{
+		"id": 2,
+		"event": map[string]any{
+			"variables": map[string]any{
+				"trigger": map[string]any{
+					"entity_id": "sensor.ev_charger_power",
+					"to_state": map[string]any{
+						"entity_id":    "sensor.ev_charger_power",
+						"state":        "250",
+						"last_changed": at.Format(time.RFC3339Nano),
+					},
+					"from_state": map[string]any{
+						"entity_id":    "sensor.ev_charger_power",
+						"state":        "0",
+						"last_changed": at.Add(-time.Minute).Format(time.RFC3339Nano),
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	msg, ok, err := ParseEventMessage(payload)
+	if err != nil {
+		t.Fatalf("ParseEventMessage() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("ParseEventMessage() ok = false, want true")
+	}
+	if msg.Event.Data.EntityID != "sensor.ev_charger_power" {
+		t.Fatalf("EntityID = %q, want sensor.ev_charger_power", msg.Event.Data.EntityID)
+	}
+	if msg.Event.Data.NewState == nil || msg.Event.Data.NewState.State != "250" {
+		t.Fatalf("NewState = %#v, want state 250", msg.Event.Data.NewState)
+	}
+	if msg.Event.Data.OldState == nil || msg.Event.Data.OldState.State != "0" {
+		t.Fatalf("OldState = %#v, want state 0", msg.Event.Data.OldState)
+	}
+}
+
 func newTestHAServer(t *testing.T, handle func(*testing.T, *websocket.Conn)) *httptest.Server {
 	t.Helper()
 	upgrader := websocket.Upgrader{}
