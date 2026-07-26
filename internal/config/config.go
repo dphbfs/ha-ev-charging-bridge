@@ -17,15 +17,12 @@ import (
 const DefaultEventType = "state_changed"
 
 const (
-	defaultStartThresholdW  = 200
-	defaultEndThresholdW    = 50
-	defaultEndDebounce      = 10 * time.Second
-	defaultConfigFilePath   = "config.yaml"
-	defaultDeviceConfigPath = "devices.yaml"
-	defaultIngressStorePath = "var/ingress-events.jsonl"
-	defaultActiveStorePath  = "var/current-session.json"
-	defaultSessionStorePath = "var/sessions.jsonl"
-	defaultLogFilePath      = "log/app.log"
+	defaultStartThresholdW = 200
+	defaultEndThresholdW   = 50
+	defaultEndDebounce     = 10 * time.Second
+	defaultConfigFilePath  = "config.yaml"
+	defaultDatabasePath    = "var/bridge.db"
+	defaultLogFilePath     = "log/app.log"
 )
 
 type Runtime struct {
@@ -33,22 +30,23 @@ type Runtime struct {
 	HAURL           string
 	Token           string
 	EventType       string
-	DeviceConfig    string
+	Chargers        []Charger
 	StartThresholdW float64
 	EndThresholdW   float64
 	EndDebounce     time.Duration
-	IngressStore    string
-	ActiveStore     string
-	SessionStore    string
+	DatabasePath    string
 	LogFile         string
 }
 
 type V1 struct {
 	HomeAssistant HomeAssistant `yaml:"home_assistant"`
+	HAEntities    HAEntities    `yaml:"ha_entities"`
 	Chargers      []Charger     `yaml:"chargers"`
 	Retention     Retention     `yaml:"retention"`
 	Runtime       Paths         `yaml:"runtime"`
 }
+
+type HAEntities map[string]map[string]string
 
 type HomeAssistant struct {
 	URL        string   `yaml:"url"`
@@ -58,6 +56,7 @@ type HomeAssistant struct {
 
 type Charger struct {
 	ChargerID    string         `yaml:"charger_id"`
+	ChargerName  string         `yaml:"charger_name"`
 	EVSEID       string         `yaml:"evse_id"`
 	ConnectorID  string         `yaml:"connector_id"`
 	MeterID      string         `yaml:"meter_id"`
@@ -84,10 +83,49 @@ type Availability struct {
 }
 
 type PowerThreshold struct {
-	Type       string  `yaml:"type"`
-	EntityID   string  `yaml:"entity_id"`
-	ThresholdW float64 `yaml:"threshold_w"`
-	Duration   string  `yaml:"duration"`
+	Type       string           `yaml:"type"`
+	EntityID   string           `yaml:"entity_id"`
+	State      string           `yaml:"state"`
+	Reason     string           `yaml:"reason"`
+	ThresholdW float64          `yaml:"threshold_w"`
+	Duration   string           `yaml:"duration"`
+	Events     []Event          `yaml:"events"`
+	Rules      []PowerThreshold `yaml:"-"`
+}
+
+type powerThresholdYAML PowerThreshold
+
+func (r *PowerThreshold) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.SequenceNode:
+		var rules []powerThresholdYAML
+		if err := value.Decode(&rules); err != nil {
+			return err
+		}
+		converted := make([]PowerThreshold, len(rules))
+		for i, rule := range rules {
+			converted[i] = PowerThreshold(rule)
+		}
+		*r = firstPowerThresholdOrZero(converted)
+		r.Rules = converted
+		return nil
+	case yaml.MappingNode:
+		var rule powerThresholdYAML
+		if err := value.Decode(&rule); err != nil {
+			return err
+		}
+		*r = PowerThreshold(rule)
+		r.Rules = []PowerThreshold{*r}
+		return nil
+	default:
+		return fmt.Errorf("expected mapping or sequence")
+	}
+}
+
+type Event struct {
+	EntityID string `yaml:"entity_id"`
+	State    string `yaml:"state"`
+	Reason   string `yaml:"reason"`
 }
 
 type Meter struct {
@@ -105,11 +143,8 @@ type Retention struct {
 }
 
 type Paths struct {
-	DeviceConfig       string `yaml:"device_config"`
-	IngressStore       string `yaml:"ingress_store"`
-	ActiveSessionStore string `yaml:"active_session_store"`
-	SessionStore       string `yaml:"session_store"`
-	LogFile            string `yaml:"log_file"`
+	DatabasePath string `yaml:"database_path"`
+	LogFile      string `yaml:"log_file"`
 }
 
 func ParseRuntime() (Runtime, error) {
@@ -118,13 +153,10 @@ func ParseRuntime() (Runtime, error) {
 	flag.StringVar(&cfg.HAURL, "ha-url", os.Getenv("HA_URL"), "Home Assistant base URL, e.g. http://home-assistant.example.local:8123")
 	flag.StringVar(&cfg.Token, "token", os.Getenv("HA_TOKEN"), "Home Assistant long-lived access token")
 	flag.StringVar(&cfg.EventType, "event-type", envOrDefault("HA_EVENT_TYPE", DefaultEventType), "Home Assistant event type to subscribe to; empty subscribes to all events")
-	flag.StringVar(&cfg.DeviceConfig, "device-config", envOrDefault("DEVICE_CONFIG", defaultDeviceConfigPath), "Path to YAML device configuration")
 	flag.Float64Var(&cfg.StartThresholdW, "start-threshold-w", envFloatOrDefault("SESSION_START_THRESHOLD_W", defaultStartThresholdW), "Power threshold in watts that starts a session")
 	flag.Float64Var(&cfg.EndThresholdW, "end-threshold-w", envFloatOrDefault("SESSION_END_THRESHOLD_W", defaultEndThresholdW), "Power threshold in watts that can end a session")
 	flag.DurationVar(&cfg.EndDebounce, "end-debounce", envDurationOrDefault("SESSION_END_DEBOUNCE", defaultEndDebounce), "How long power must remain below the end threshold before ending a session")
-	flag.StringVar(&cfg.IngressStore, "ingress-store", envOrDefault("INGRESS_STORE", defaultIngressStorePath), "Path to append raw received Home Assistant events as JSON lines")
-	flag.StringVar(&cfg.ActiveStore, "active-store", envOrDefault("ACTIVE_SESSION_STORE", defaultActiveStorePath), "Path to write the current in-progress session as JSON")
-	flag.StringVar(&cfg.SessionStore, "session-store", envOrDefault("SESSION_STORE", defaultSessionStorePath), "Path to append completed sessions as JSON lines")
+	flag.StringVar(&cfg.DatabasePath, "database", envOrDefault("DATABASE_PATH", defaultDatabasePath), "Path to SQLite runtime database")
 	flag.StringVar(&cfg.LogFile, "log-file", envOrDefault("LOG_FILE", defaultLogFilePath), "Path to append application logs")
 	flag.Parse()
 
@@ -215,7 +247,13 @@ func (c V1) validate() error {
 		if err := validatePowerThreshold(name+".start", charger.Start); err != nil {
 			return err
 		}
-		if err := validatePowerThreshold(name+".stop", charger.Stop); err != nil {
+		if err := validateStopRules(name+".stop", charger.Stop); err != nil {
+			return err
+		}
+		if err := validateRequired(name+".entities.power_w", charger.Entities.PowerW); err != nil {
+			return err
+		}
+		if err := validateRequired(name+".entities.energy_kwh", charger.Entities.EnergyKWh); err != nil {
 			return err
 		}
 		if strings.TrimSpace(charger.Availability.UnavailableAfter) != "" {
@@ -297,6 +335,71 @@ func validatePowerThreshold(name string, rule PowerThreshold) error {
 	return nil
 }
 
+func validateStopRules(name string, rule PowerThreshold) error {
+	rules := rule.StopRules()
+	if len(rules) == 0 {
+		return fmt.Errorf("%s must contain at least one rule", name)
+	}
+	for i, stopRule := range rules {
+		ruleName := name
+		if len(rules) > 1 {
+			ruleName = fmt.Sprintf("%s[%d]", name, i)
+		}
+		switch strings.TrimSpace(stopRule.Type) {
+		case "power_threshold":
+			if err := validatePowerThreshold(ruleName, stopRule); err != nil {
+				return err
+			}
+		case "":
+			return fmt.Errorf("%s.type is required", ruleName)
+		default:
+			if err := validateRequired(ruleName+".entity_id", stopRule.EntityID); err != nil {
+				return err
+			}
+			if err := validateRequired(ruleName+".state", stopRule.State); err != nil {
+				return err
+			}
+			if strings.TrimSpace(stopRule.Duration) != "" {
+				if _, err := parseConfigDuration(stopRule.Duration); err != nil {
+					return fmt.Errorf("%s.duration is invalid: %w", ruleName, err)
+				}
+			}
+		}
+		for j, event := range stopRule.Events {
+			eventName := fmt.Sprintf("%s.events[%d]", ruleName, j)
+			if err := validateRequired(eventName+".entity_id", event.EntityID); err != nil {
+				return err
+			}
+			if err := validateRequired(eventName+".state", event.State); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (r PowerThreshold) StopRules() []PowerThreshold {
+	if len(r.Rules) > 0 {
+		return r.Rules
+	}
+	if strings.TrimSpace(r.Type) == "" {
+		return nil
+	}
+	return []PowerThreshold{r}
+}
+
+func firstPowerThresholdOrZero(rules []PowerThreshold) PowerThreshold {
+	for _, rule := range rules {
+		if strings.TrimSpace(rule.Type) == "power_threshold" {
+			return rule
+		}
+	}
+	if len(rules) > 0 {
+		return rules[0]
+	}
+	return PowerThreshold{}
+}
+
 func parseConfigDuration(value string) (time.Duration, error) {
 	trimmed := strings.TrimSpace(value)
 	if strings.HasSuffix(trimmed, "d") {
@@ -314,10 +417,8 @@ func (c V1) toRuntime() *Runtime {
 		HAURL:        c.HomeAssistant.URL,
 		Token:        c.HomeAssistant.Token,
 		EventType:    DefaultEventType,
-		DeviceConfig: envOrValue(c.Runtime.DeviceConfig, defaultDeviceConfigPath),
-		IngressStore: envOrValue(c.Runtime.IngressStore, defaultIngressStorePath),
-		ActiveStore:  envOrValue(c.Runtime.ActiveSessionStore, defaultActiveStorePath),
-		SessionStore: envOrValue(c.Runtime.SessionStore, defaultSessionStorePath),
+		Chargers:     append([]Charger(nil), c.Chargers...),
+		DatabasePath: envOrValue(c.Runtime.DatabasePath, defaultDatabasePath),
 		LogFile:      envOrValue(c.Runtime.LogFile, defaultLogFilePath),
 	}
 	if len(c.HomeAssistant.EventTypes) > 0 {
@@ -345,20 +446,23 @@ func mergeRuntimeConfig(current Runtime, loaded Runtime) Runtime {
 			loaded.Token = current.Token
 		case "event-type":
 			loaded.EventType = current.EventType
-		case "device-config":
-			loaded.DeviceConfig = current.DeviceConfig
 		case "start-threshold-w":
 			loaded.StartThresholdW = current.StartThresholdW
+			for i := range loaded.Chargers {
+				loaded.Chargers[i].Start.ThresholdW = current.StartThresholdW
+			}
 		case "end-threshold-w":
 			loaded.EndThresholdW = current.EndThresholdW
+			for i := range loaded.Chargers {
+				loaded.Chargers[i].Stop.ThresholdW = current.EndThresholdW
+			}
 		case "end-debounce":
 			loaded.EndDebounce = current.EndDebounce
-		case "ingress-store":
-			loaded.IngressStore = current.IngressStore
-		case "active-store":
-			loaded.ActiveStore = current.ActiveStore
-		case "session-store":
-			loaded.SessionStore = current.SessionStore
+			for i := range loaded.Chargers {
+				loaded.Chargers[i].Stop.Duration = current.EndDebounce.String()
+			}
+		case "database":
+			loaded.DatabasePath = current.DatabasePath
 		case "log-file":
 			loaded.LogFile = current.LogFile
 		}

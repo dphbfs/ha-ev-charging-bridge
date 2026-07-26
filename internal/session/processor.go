@@ -11,11 +11,15 @@ import (
 var ErrActiveSessionExists = errors.New("active session already exists")
 
 type Processor struct {
-	active map[string]*events.Session
+	active    map[string]*events.Session
+	completed map[string]events.Session
 }
 
 func NewProcessor() *Processor {
-	return &Processor{active: map[string]*events.Session{}}
+	return &Processor{
+		active:    map[string]*events.Session{},
+		completed: map[string]events.Session{},
+	}
 }
 
 func (p *Processor) Apply(event events.ChargerEvent) ([]events.SessionEvent, error) {
@@ -43,6 +47,19 @@ func (p *Processor) Active(chargerID string) (*events.Session, bool) {
 	return &copy, true
 }
 
+func (p *Processor) RestoreActive(session events.Session) {
+	copy := session
+	p.active[session.ChargerID] = &copy
+}
+
+func (p *Processor) Completed(sessionID string) (events.Session, bool) {
+	completed, ok := p.completed[sessionID]
+	if !ok {
+		return events.Session{}, false
+	}
+	return completed, true
+}
+
 func (p *Processor) start(event events.ChargerEvent) ([]events.SessionEvent, error) {
 	if _, exists := p.active[event.ChargerID]; exists {
 		return nil, ErrActiveSessionExists
@@ -53,6 +70,7 @@ func (p *Processor) start(event events.ChargerEvent) ([]events.SessionEvent, err
 		ChargerID:      event.ChargerID,
 		EVSEID:         event.EVSEID,
 		ConnectorID:    event.ConnectorID,
+		MeterID:        event.MeterID,
 		State:          events.SessionCharging,
 		StartedAt:      event.OccurredAt,
 		StartEnergyKWh: cloneFloat(event.EnergyKWh),
@@ -90,6 +108,7 @@ func (p *Processor) end(event events.ChargerEvent) ([]events.SessionEvent, error
 		OccurredAt: event.OccurredAt,
 		Reason:     reason,
 	}
+	p.completed[active.ID] = *active
 	delete(p.active, event.ChargerID)
 	return []events.SessionEvent{sessionEvent}, nil
 }

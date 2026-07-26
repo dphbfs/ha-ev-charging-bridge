@@ -1,5 +1,0 @@
-devices:
-  - name: ev_charger_smart_plug
-    type: smart_plug
-    entity_id: sensor.ev_charger_power
-    energy_entity_id: sensor.ev_charger_energy

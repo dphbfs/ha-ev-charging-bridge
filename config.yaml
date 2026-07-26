@@ -4,43 +4,54 @@ home_assistant:
   event_types:
     - state_changed
 
+ha_entities:
+  smart_plug:
+    device: &smart_plug_device switch.charger_plug
+    power: &smart_plug_power sensor.charger_plug_current_consumption
+    energy_kwh: &smart_plug_energy_kwh sensor.car_charger_energy
+    voltage: &smart_plug_voltage sensor.charger_plug_voltage
+
 chargers:
   - charger_id: charger-1
+    charger_name: Tesla Mobile connector
     evse_id: evse-1
     connector_id: connector-1
     meter_id: meter-1
     entities:
-      power_w: sensor.ev_charger_power
-      energy_kwh: sensor.ev_charger_energy
-      availability: binary_sensor.ev_charger_online
-      fault: sensor.ev_charger_fault
-      plug: binary_sensor.ev_connector_plugged
+      power_w: *smart_plug_power
+      energy_kwh: *smart_plug_energy_kwh
+      availability: *smart_plug_device
+      plug: *smart_plug_device
     availability:
-      entity_id: binary_sensor.ev_charger_online
+      entity_id: *smart_plug_device
       available_state: "on"
       unavailable_state: "off"
       unavailable_after: 2m
     start:
       type: power_threshold
-      entity_id: sensor.ev_charger_power
+      entity_id: *smart_plug_power
       threshold_w: 200
-      duration: 0s
-    stop:
-      type: power_threshold
-      entity_id: sensor.ev_charger_power
-      threshold_w: 50
       duration: 10s
+    stop:
+      - type: power_threshold
+        entity_id: *smart_plug_power
+        threshold_w: 50
+        duration: 10s
+      - type: device_offline
+        entity_id: *smart_plug_device
+        state: "off"
+        duration: 10s
     meters:
       - meter_id: meter-1
-        entity_id: sensor.ev_charger_power
+        entity_id: *smart_plug_power
         unit: W
         aggregation: average
         outside_session_storage: drop
       - meter_id: meter-1
-        entity_id: sensor.ev_charger_energy
+        entity_id: *smart_plug_energy_kwh
         unit: kWh
         aggregation: last
-        outside_session_storage: save
+        outside_session_storage: drop
 
 retention:
   meter_values: 90d
@@ -48,8 +59,5 @@ retention:
   raw_events: 7d
 
 runtime:
-  device_config: devices.yaml
-  ingress_store: var/ingress-events.jsonl
-  active_session_store: var/current-session.json
-  session_store: var/sessions.jsonl
+  database_path: var/bridge.db
   log_file: log/app.log

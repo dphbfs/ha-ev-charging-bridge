@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -8,19 +9,15 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"ha-ev-charging-bridge/internal/app"
 	bridgeconfig "ha-ev-charging-bridge/internal/config"
 	"ha-ev-charging-bridge/internal/homeassistant"
+	"ha-ev-charging-bridge/internal/persistence"
 )
 
 func run(cfg bridgeconfig.Runtime) error {
-	if err := ensureParentDir(cfg.IngressStore); err != nil {
-		return fmt.Errorf("prepare ingress event store: %w", err)
-	}
-	if err := ensureParentDir(cfg.ActiveStore); err != nil {
-		return fmt.Errorf("prepare active session store: %w", err)
-	}
-	if err := ensureParentDir(cfg.SessionStore); err != nil {
-		return fmt.Errorf("prepare session store: %w", err)
+	if err := ensureParentDir(cfg.DatabasePath); err != nil {
+		return fmt.Errorf("prepare SQLite database: %w", err)
 	}
 
 	if strings.TrimSpace(cfg.HAURL) == "" {
@@ -29,18 +26,27 @@ func run(cfg bridgeconfig.Runtime) error {
 	if strings.TrimSpace(cfg.Token) == "" {
 		return errors.New("missing Home Assistant token: set HA_TOKEN or pass -token")
 	}
-	devices, err := loadDevices(cfg.DeviceConfig)
+	if len(cfg.Chargers) == 0 {
+		return errors.New("missing charger configuration: define at least one charger in config.yaml")
+	}
+	ctx := context.Background()
+	store, err := persistence.Open(ctx, cfg.DatabasePath)
 	if err != nil {
 		return err
 	}
-	smartPlug, smartPlugCount, err := firstSmartPlug(devices)
-	if err != nil {
-		return err
+	defer store.Close()
+	pipelines := make([]*app.Pipeline, 0, len(cfg.Chargers))
+	for _, charger := range cfg.Chargers {
+		if strings.TrimSpace(charger.ChargerID) == "" {
+			return errors.New("missing charger configuration: define charger_id in config.yaml")
+		}
+		slog.Info("loaded charger", "charger", charger.ChargerID, "power_entity_id", charger.Entities.PowerW, "energy_entity_id", charger.Entities.EnergyKWh)
+		pipeline, err := app.NewPipeline(ctx, charger, store)
+		if err != nil {
+			return err
+		}
+		pipelines = append(pipelines, pipeline)
 	}
-	if smartPlugCount > 1 {
-		slog.Info("multiple smart plug devices found; using first for this POC", "count", smartPlugCount, "device", smartPlug.Name)
-	}
-	slog.Info("loaded smart plug device", "device", smartPlug.Name, "power_entity_id", smartPlug.EntityID, "energy_entity_id", smartPlug.EnergyEntityID)
 
 	wsURL, err := homeassistant.WebsocketURL(cfg.HAURL)
 	if err != nil {
@@ -62,10 +68,10 @@ func run(cfg bridgeconfig.Runtime) error {
 	if err != nil {
 		return err
 	}
-
-	sessionTracker := newSmartPlugHandler(cfg, smartPlug)
-	if err := sessionTracker.initialize(states); err != nil {
-		return err
+	for _, pipeline := range pipelines {
+		if err := pipeline.InitializeStates(ctx, states); err != nil {
+			return err
+		}
 	}
 
 	if err := homeassistant.Subscribe(conn, 2, cfg.EventType); err != nil {
@@ -78,25 +84,49 @@ func run(cfg bridgeconfig.Runtime) error {
 
 	for {
 		var timer <-chan time.Time
-		if sessionTracker.endTimer != nil {
-			timer = sessionTracker.endTimer.C
+		if deadline, ok := nextDeadline(pipelines); ok {
+			delay := time.Until(deadline)
+			if delay <= 0 {
+				for _, pipeline := range pipelines {
+					if _, err := pipeline.Advance(ctx, time.Now()); err != nil {
+						slog.Warn("v1 event processing failed", "error", err)
+					}
+				}
+				continue
+			}
+			timer = time.After(delay)
 		}
 
 		select {
 		case payload := <-messages:
-			if err := appendJSONLine(cfg.IngressStore, payload); err != nil {
-				slog.Warn("ingress event write failed", "error", err)
-			}
 			homeassistant.LogEvent(payload)
-			if err := sessionTracker.handleEvent(payload); err != nil {
-				slog.Warn("session tracking failed", "error", err)
+			for _, pipeline := range pipelines {
+				if _, err := pipeline.ProcessPayload(ctx, payload); err != nil {
+					slog.Warn("v1 event processing failed", "error", err)
+				}
 			}
 		case err := <-readErrors:
 			return err
-		case <-timer:
-			if err := sessionTracker.finishAfterDebounce(); err != nil {
-				slog.Warn("session tracking failed", "error", err)
+		case at := <-timer:
+			for _, pipeline := range pipelines {
+				if _, err := pipeline.Advance(ctx, at); err != nil {
+					slog.Warn("v1 event processing failed", "error", err)
+				}
 			}
 		}
 	}
+}
+
+func nextDeadline(pipelines []*app.Pipeline) (time.Time, bool) {
+	var next time.Time
+	for _, pipeline := range pipelines {
+		deadline, ok := pipeline.Deadline()
+		if !ok {
+			continue
+		}
+		if next.IsZero() || deadline.Before(next) {
+			next = deadline
+		}
+	}
+	return next, !next.IsZero()
 }

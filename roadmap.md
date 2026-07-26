@@ -248,6 +248,53 @@ Verification:
 8. CI generates coverage output.
 9. README contains test status and coverage badges pointing at the `main` branch state.
 
+### Task 12: Replace Remaining POC Runtime With V1 Flow
+
+Remove the main-package smart-plug POC path and make the real application loop use the V1 packages already introduced under `internal/`.
+
+Known gaps to close:
+
+1. Wire production `run()` through the V1 pipeline: typed HA event parsing, router, detector, session processor, meter handling, and SQLite persistence.
+2. Delete `session_tracker.go` and its local `session` model once no production code depends on `newSmartPlugHandler` or legacy conversion helpers.
+3. Add an application orchestration layer that persists active sessions, completed sessions, meter values, and lifecycle events without duplicating the E2E test helper logic.
+4. Make session completion return or expose enough session state to persist the real completed session, including original start time, configured `meter_id`, start/end energy, and consumed energy.
+5. Preserve latest known energy and power state from Home Assistant initial states so sessions can start with a valid start energy when the start trigger is a power event.
+6. Implement duration/debounce semantics in runtime, not only event-to-event comparisons, so configured stop and availability durations can fire even when no later HA event arrives.
+7. Build the routed entity set from full charger config, including start, stop, energy, availability, fault, and plug entities where configured.
+8. Wire meter aggregation into the runtime path instead of persisting only raw power and energy observations.
+9. Support all configured chargers rather than only carrying the first `chargers[]` entry into `Runtime`.
+10. Add production-level tests that exercise the real `run()` orchestration or a shared application pipeline, not only package-level units and E2E-only helper code.
+
+Verification:
+
+1. No production references remain to `smartPlugHandler`, `newSmartPlugHandler`, `legacySessionFromEventSession`, or the main-package `session` type.
+2. The simulated Home Assistant E2E test uses the same V1 orchestration code as production.
+3. Completed sessions persisted by the V1 path include configured charger identity, meter ID, start/end timestamps, and energy consumption when energy values are available.
+4. `go test ./...` passes.
+
+### Task 13: Manually Test Live Charging Sessions
+
+Validate the V1 runtime against real Home Assistant charger events and SQLite persistence.
+
+Manual test flow:
+
+1. Confirm `config.yaml` uses real Home Assistant entity IDs for power, cumulative energy, availability, start/stop detection, and meters.
+2. Start the app with a clean or known SQLite database path.
+3. Start the app while the car is already charging and verify an active session is created from initial Home Assistant state.
+4. Start a new charging session after the app is already running and verify the power threshold creates an active session after the configured start duration.
+5. While charging, verify meter values are persisted for the active session.
+6. Stop charging and verify the active session is moved to completed sessions after the configured stop duration.
+7. Verify lifecycle events include `session_started`, `session_updated`, and `session_ended` for the session.
+8. Toggle or observe charger plug availability and verify unavailable behavior does not incorrectly end normal charging sessions.
+
+Verification:
+
+1. `active_sessions` contains one row while the car is charging.
+2. `completed_sessions` contains the finished session after charging stops.
+3. `meter_values` contains power and energy values linked to the session ID.
+4. `session_events` contains expected lifecycle rows for the session ID.
+5. App logs show no `v1 event processing failed` messages during the manual flow.
+
 ### Phase 1 Completion Criteria
 
 Phase 1 is complete when:

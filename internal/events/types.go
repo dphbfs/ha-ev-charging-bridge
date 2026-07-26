@@ -25,6 +25,7 @@ type ChargerEvent struct {
 	ChargerID   string
 	EVSEID      string
 	ConnectorID string
+	MeterID     string
 	EntityID    string
 	OccurredAt  time.Time
 	PowerW      *float64
