@@ -40,10 +40,13 @@ type Runtime struct {
 
 type V1 struct {
 	HomeAssistant HomeAssistant `yaml:"home_assistant"`
+	HAEntities    HAEntities    `yaml:"ha_entities"`
 	Chargers      []Charger     `yaml:"chargers"`
 	Retention     Retention     `yaml:"retention"`
 	Runtime       Paths         `yaml:"runtime"`
 }
+
+type HAEntities map[string]map[string]string
 
 type HomeAssistant struct {
 	URL        string   `yaml:"url"`
@@ -53,6 +56,7 @@ type HomeAssistant struct {
 
 type Charger struct {
 	ChargerID    string         `yaml:"charger_id"`
+	ChargerName  string         `yaml:"charger_name"`
 	EVSEID       string         `yaml:"evse_id"`
 	ConnectorID  string         `yaml:"connector_id"`
 	MeterID      string         `yaml:"meter_id"`
@@ -79,10 +83,49 @@ type Availability struct {
 }
 
 type PowerThreshold struct {
-	Type       string  `yaml:"type"`
-	EntityID   string  `yaml:"entity_id"`
-	ThresholdW float64 `yaml:"threshold_w"`
-	Duration   string  `yaml:"duration"`
+	Type       string           `yaml:"type"`
+	EntityID   string           `yaml:"entity_id"`
+	State      string           `yaml:"state"`
+	Reason     string           `yaml:"reason"`
+	ThresholdW float64          `yaml:"threshold_w"`
+	Duration   string           `yaml:"duration"`
+	Events     []Event          `yaml:"events"`
+	Rules      []PowerThreshold `yaml:"-"`
+}
+
+type powerThresholdYAML PowerThreshold
+
+func (r *PowerThreshold) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.SequenceNode:
+		var rules []powerThresholdYAML
+		if err := value.Decode(&rules); err != nil {
+			return err
+		}
+		converted := make([]PowerThreshold, len(rules))
+		for i, rule := range rules {
+			converted[i] = PowerThreshold(rule)
+		}
+		*r = firstPowerThresholdOrZero(converted)
+		r.Rules = converted
+		return nil
+	case yaml.MappingNode:
+		var rule powerThresholdYAML
+		if err := value.Decode(&rule); err != nil {
+			return err
+		}
+		*r = PowerThreshold(rule)
+		r.Rules = []PowerThreshold{*r}
+		return nil
+	default:
+		return fmt.Errorf("expected mapping or sequence")
+	}
+}
+
+type Event struct {
+	EntityID string `yaml:"entity_id"`
+	State    string `yaml:"state"`
+	Reason   string `yaml:"reason"`
 }
 
 type Meter struct {
@@ -204,7 +247,7 @@ func (c V1) validate() error {
 		if err := validatePowerThreshold(name+".start", charger.Start); err != nil {
 			return err
 		}
-		if err := validatePowerThreshold(name+".stop", charger.Stop); err != nil {
+		if err := validateStopRules(name+".stop", charger.Stop); err != nil {
 			return err
 		}
 		if err := validateRequired(name+".entities.power_w", charger.Entities.PowerW); err != nil {
@@ -290,6 +333,71 @@ func validatePowerThreshold(name string, rule PowerThreshold) error {
 		}
 	}
 	return nil
+}
+
+func validateStopRules(name string, rule PowerThreshold) error {
+	rules := rule.StopRules()
+	if len(rules) == 0 {
+		return fmt.Errorf("%s must contain at least one rule", name)
+	}
+	for i, stopRule := range rules {
+		ruleName := name
+		if len(rules) > 1 {
+			ruleName = fmt.Sprintf("%s[%d]", name, i)
+		}
+		switch strings.TrimSpace(stopRule.Type) {
+		case "power_threshold":
+			if err := validatePowerThreshold(ruleName, stopRule); err != nil {
+				return err
+			}
+		case "":
+			return fmt.Errorf("%s.type is required", ruleName)
+		default:
+			if err := validateRequired(ruleName+".entity_id", stopRule.EntityID); err != nil {
+				return err
+			}
+			if err := validateRequired(ruleName+".state", stopRule.State); err != nil {
+				return err
+			}
+			if strings.TrimSpace(stopRule.Duration) != "" {
+				if _, err := parseConfigDuration(stopRule.Duration); err != nil {
+					return fmt.Errorf("%s.duration is invalid: %w", ruleName, err)
+				}
+			}
+		}
+		for j, event := range stopRule.Events {
+			eventName := fmt.Sprintf("%s.events[%d]", ruleName, j)
+			if err := validateRequired(eventName+".entity_id", event.EntityID); err != nil {
+				return err
+			}
+			if err := validateRequired(eventName+".state", event.State); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (r PowerThreshold) StopRules() []PowerThreshold {
+	if len(r.Rules) > 0 {
+		return r.Rules
+	}
+	if strings.TrimSpace(r.Type) == "" {
+		return nil
+	}
+	return []PowerThreshold{r}
+}
+
+func firstPowerThresholdOrZero(rules []PowerThreshold) PowerThreshold {
+	for _, rule := range rules {
+		if strings.TrimSpace(rule.Type) == "power_threshold" {
+			return rule
+		}
+	}
+	if len(rules) > 0 {
+		return rules[0]
+	}
+	return PowerThreshold{}
 }
 
 func parseConfigDuration(value string) (time.Duration, error) {

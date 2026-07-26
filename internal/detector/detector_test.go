@@ -73,6 +73,91 @@ func TestDetectEmitsChargerUnavailableAfterDuration(t *testing.T) {
 	}
 }
 
+func TestDetectEmitsChargingStoppedFromConfiguredStopEvent(t *testing.T) {
+	cfg := chargerConfig()
+	cfg.Stop.Events = []bridgeconfig.Event{
+		{EntityID: "switch.charger_plug", State: "off", Reason: "smart_plug_off"},
+	}
+	d := newDetector(t, cfg)
+	at := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+
+	got, err := d.Detect(event("switch.charger_plug", "off", at), State{ActiveSession: true})
+	if err != nil {
+		t.Fatalf("Detect() error = %v", err)
+	}
+	stop, ok := findEvent(got, events.ChargingStopped)
+	if !ok {
+		t.Fatalf("Detect() events = %#v, want charging_stopped", got)
+	}
+	if stop.Reason != "smart_plug_off" {
+		t.Fatalf("Reason = %q, want smart_plug_off", stop.Reason)
+	}
+}
+
+func TestDetectEmitsChargingStoppedFromConfiguredStopRuleList(t *testing.T) {
+	cfg := chargerConfig()
+	cfg.Stop.Rules = []bridgeconfig.PowerThreshold{
+		cfg.Stop,
+		{Type: "device_offline", EntityID: "switch.charger_plug", State: "off", Reason: "smart_plug_off"},
+	}
+	d := newDetector(t, cfg)
+	at := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+
+	got, err := d.Detect(event("switch.charger_plug", "off", at), State{ActiveSession: true})
+	if err != nil {
+		t.Fatalf("Detect() error = %v", err)
+	}
+	stop, ok := findEvent(got, events.ChargingStopped)
+	if !ok {
+		t.Fatalf("Detect() events = %#v, want charging_stopped", got)
+	}
+	if stop.Reason != "smart_plug_off" {
+		t.Fatalf("Reason = %q, want smart_plug_off", stop.Reason)
+	}
+}
+
+func TestDetectDebouncesConfiguredStopRuleListEvent(t *testing.T) {
+	cfg := chargerConfig()
+	cfg.Stop.Rules = []bridgeconfig.PowerThreshold{
+		cfg.Stop,
+		{Type: "device_offline", EntityID: "switch.charger_plug", State: "off", Duration: "10s", Reason: "smart_plug_off"},
+	}
+	d := newDetector(t, cfg)
+	start := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+
+	got, err := d.Detect(event("switch.charger_plug", "off", start), State{ActiveSession: true})
+	if err != nil {
+		t.Fatalf("Detect() error = %v", err)
+	}
+	if hasEvent(got, events.ChargingStopped) {
+		t.Fatalf("Detect() events = %#v, did not want charging_stopped before duration", got)
+	}
+
+	got, err = d.Detect(event("switch.charger_plug", "off", start.Add(10*time.Second)), State{ActiveSession: true})
+	if err != nil {
+		t.Fatalf("Detect() error = %v", err)
+	}
+	if !hasEvent(got, events.ChargingStopped) {
+		t.Fatalf("Detect() events = %#v, want charging_stopped", got)
+	}
+}
+
+func TestDetectIgnoresConfiguredStopEventWithoutActiveSession(t *testing.T) {
+	cfg := chargerConfig()
+	cfg.Stop.Events = []bridgeconfig.Event{
+		{EntityID: "switch.charger_plug", State: "off", Reason: "smart_plug_off"},
+	}
+	d := newDetector(t, cfg)
+
+	got, err := d.Detect(event("switch.charger_plug", "off", time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)), State{})
+	if err != nil {
+		t.Fatalf("Detect() error = %v", err)
+	}
+	if hasEvent(got, events.ChargingStopped) {
+		t.Fatalf("Detect() events = %#v, did not want charging_stopped", got)
+	}
+}
+
 func TestDetectDoesNotEmitStartWhenSessionIsActive(t *testing.T) {
 	d := newDetector(t, chargerConfig())
 	start := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
@@ -111,12 +196,17 @@ func newDetector(t *testing.T, cfg bridgeconfig.Charger) *Detector {
 }
 
 func hasEvent(values []events.ChargerEvent, eventType events.ChargerEventType) bool {
+	_, ok := findEvent(values, eventType)
+	return ok
+}
+
+func findEvent(values []events.ChargerEvent, eventType events.ChargerEventType) (events.ChargerEvent, bool) {
 	for _, value := range values {
 		if value.Type == eventType {
-			return true
+			return value, true
 		}
 	}
-	return false
+	return events.ChargerEvent{}, false
 }
 
 func event(entityID, state string, at time.Time) homeassistant.EventMessage {

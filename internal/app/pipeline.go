@@ -258,6 +258,12 @@ func entityIDs(charger bridgeconfig.Charger) []string {
 		charger.Entities.Fault,
 		charger.Entities.Plug,
 	}
+	for _, stopRule := range charger.Stop.StopRules() {
+		values = append(values, stopRule.EntityID)
+		for _, event := range stopRule.Events {
+			values = append(values, event.EntityID)
+		}
+	}
 	seen := map[string]struct{}{}
 	result := []string{}
 	for _, value := range values {
