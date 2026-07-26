@@ -36,11 +36,13 @@ func run(cfg bridgeconfig.Runtime) error {
 	}
 	defer store.Close()
 	pipelines := make([]*app.Pipeline, 0, len(cfg.Chargers))
+	entityIDs := []string{}
 	for _, charger := range cfg.Chargers {
 		if strings.TrimSpace(charger.ChargerID) == "" {
 			return errors.New("missing charger configuration: define charger_id in config.yaml")
 		}
 		slog.Info("loaded charger", "charger", charger.ChargerID, "power_entity_id", charger.Entities.PowerW, "energy_entity_id", charger.Entities.EnergyKWh)
+		entityIDs = append(entityIDs, app.EntityIDs(charger)...)
 		pipeline, err := app.NewPipeline(ctx, charger, store)
 		if err != nil {
 			return err
@@ -74,7 +76,7 @@ func run(cfg bridgeconfig.Runtime) error {
 		}
 	}
 
-	if err := homeassistant.Subscribe(conn, 2, cfg.EventType); err != nil {
+	if err := homeassistant.SubscribeStateChanges(conn, 2, entityIDs); err != nil {
 		return err
 	}
 
