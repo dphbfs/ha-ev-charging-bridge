@@ -2,7 +2,7 @@
 set -eu
 
 APP_NAME="ha-ev-charging-bridge"
-REPO="${REPO:-dphbfs/ha-ev-charging-poc}"
+REPO="${REPO:-dphbfs/ha-ev-charging-bridge}"
 VERSION="${VERSION:-${1:-latest}}"
 INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
 SERVICE_NAME="${SERVICE_NAME:-ha-ev-charging-bridge}"
