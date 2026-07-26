@@ -27,12 +27,12 @@ jobs:
           - asset_suffix: linux-arm64
             goarch: arm64
             cc: aarch64-linux-gnu-gcc
-            apt_packages: gcc-aarch64-linux-gnu
+            apt_packages: gcc-aarch64-linux-gnu libc6-dev-arm64-cross
           - asset_suffix: linux-armv7
             goarch: arm
             goarm: "7"
             cc: arm-linux-gnueabihf-gcc
-            apt_packages: gcc-arm-linux-gnueabihf
+            apt_packages: gcc-arm-linux-gnueabihf libc6-dev-armhf-cross
 
     steps:
       - name: Check out repository
