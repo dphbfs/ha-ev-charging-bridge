@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -21,8 +22,7 @@ const (
 	defaultEndThresholdW   = 50
 	defaultEndDebounce     = 10 * time.Second
 	defaultConfigFilePath  = "config.yaml"
-	defaultDatabasePath    = "var/bridge.db"
-	defaultLogFilePath     = "log/app.log"
+	defaultRuntimeDirName  = ".ha-ev-charging-bridge"
 )
 
 type Runtime struct {
@@ -156,8 +156,8 @@ func ParseRuntime() (Runtime, error) {
 	flag.Float64Var(&cfg.StartThresholdW, "start-threshold-w", envFloatOrDefault("SESSION_START_THRESHOLD_W", defaultStartThresholdW), "Power threshold in watts that starts a session")
 	flag.Float64Var(&cfg.EndThresholdW, "end-threshold-w", envFloatOrDefault("SESSION_END_THRESHOLD_W", defaultEndThresholdW), "Power threshold in watts that can end a session")
 	flag.DurationVar(&cfg.EndDebounce, "end-debounce", envDurationOrDefault("SESSION_END_DEBOUNCE", defaultEndDebounce), "How long power must remain below the end threshold before ending a session")
-	flag.StringVar(&cfg.DatabasePath, "database", envOrDefault("DATABASE_PATH", defaultDatabasePath), "Path to SQLite runtime database")
-	flag.StringVar(&cfg.LogFile, "log-file", envOrDefault("LOG_FILE", defaultLogFilePath), "Path to append application logs")
+	flag.StringVar(&cfg.DatabasePath, "database", envOrDefault("DATABASE_PATH", defaultRuntimePath("bridge.db")), "Path to SQLite runtime database")
+	flag.StringVar(&cfg.LogFile, "log-file", envOrDefault("LOG_FILE", defaultRuntimePath("app.log")), "Path to append application logs")
 	flag.Parse()
 
 	loaded, err := loadRuntimeConfig(cfg.ConfigFile)
@@ -418,8 +418,8 @@ func (c V1) toRuntime() *Runtime {
 		Token:        c.HomeAssistant.Token,
 		EventType:    DefaultEventType,
 		Chargers:     append([]Charger(nil), c.Chargers...),
-		DatabasePath: envOrValue(c.Runtime.DatabasePath, defaultDatabasePath),
-		LogFile:      envOrValue(c.Runtime.LogFile, defaultLogFilePath),
+		DatabasePath: envOrValue(c.Runtime.DatabasePath, defaultRuntimePath("bridge.db")),
+		LogFile:      envOrValue(c.Runtime.LogFile, defaultRuntimePath("app.log")),
 	}
 	if len(c.HomeAssistant.EventTypes) > 0 {
 		cfg.EventType = c.HomeAssistant.EventTypes[0]
@@ -491,6 +491,14 @@ func envOrValue(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func defaultRuntimePath(name string) string {
+	home, err := os.UserHomeDir()
+	if err == nil && strings.TrimSpace(home) != "" {
+		return filepath.Join(home, defaultRuntimeDirName, name)
+	}
+	return filepath.Join(defaultRuntimeDirName, name)
 }
 
 func envOrDefault(name, fallback string) string {
