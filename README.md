@@ -26,7 +26,7 @@ Set at least:
 ```sh
 HA_URL=http://home-assistant.example.local:8123
 HA_TOKEN=your-home-assistant-token
-CONFIG_FILE=config.yaml
+CONFIG_FILE=bridge.yaml
 ```
 
 Run the bridge:
@@ -47,15 +47,29 @@ docker compose up --build
 
 Use this mode when developing or testing the app from source in a containerized environment.
 
+## Home Assistant Add-on POC
+
+This repository includes a proof-of-concept Home Assistant add-on under `addon/`. Home Assistant OS or Supervised users can add this repository as a custom add-on repository from **Settings > Add-ons > Add-on Store > Repositories**.
+
+For the current development branch, add the repository with the branch suffix:
+
+```text
+https://github.com/dphbfs/ha-ev-charging-bridge#dev
+```
+
+The add-on uses Home Assistant Ingress and `homeassistant_api: true`, so it does not require a user-created long-lived access token. It uses the Supervisor-provided token internally and stores runtime data in the add-on persistent `/data` volume.
+
 ## Configuration
 
-V1 application settings are configured in `config.yaml`, including charger entity mappings. Home Assistant connection values use environment interpolation, so secrets such as `HA_TOKEN` stay in `.env` or the process environment.
+V1 application settings are configured in `bridge.yaml`, including charger entity mappings. Home Assistant connection values use environment interpolation, so secrets such as `HA_TOKEN` stay in `.env` or the process environment.
 
 Connection settings and runtime paths can be provided through `.env` or process environment variables. Do not commit real Home Assistant tokens.
 
 ## HTTP API
 
 The bridge exposes a read-only sessions API for the V2 frontend. Configure the listen address with `API_ADDR` or `-api-addr`; use an empty value to disable it. The default is `127.0.0.1:8080`.
+
+Set `FRONTEND_DIR` or `-frontend-dir` to a built frontend directory, such as `frontend/dist`, to serve the V2 UI from the same HTTP listener.
 
 Endpoints:
 

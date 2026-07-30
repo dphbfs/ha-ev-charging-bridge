@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -93,6 +94,28 @@ func TestServerSessionDetail(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
+func TestServerServesFrontendFallback(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/index.html", []byte("frontend shell"), 0600); err != nil {
+		t.Fatalf("write index.html: %v", err)
+	}
+	server := New(fakeStore{}, nil)
+	if err := server.ServeFrontend(dir); err != nil {
+		t.Fatalf("ServeFrontend() error = %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/session.html", nil)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if rec.Body.String() != "frontend shell" {
+		t.Fatalf("body = %q, want frontend shell", rec.Body.String())
 	}
 }
 
