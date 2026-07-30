@@ -1,5 +1,7 @@
 .env
 log/*
 var/*
+frontend/dist/
+frontend/node_modules/
 !log/.gitkeep
 !var/.gitkeep
