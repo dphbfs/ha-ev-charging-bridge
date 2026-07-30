@@ -76,6 +76,20 @@ V1 application settings are configured in `config.yaml`, including charger entit
 
 Connection settings and runtime paths can be provided through `.env` or process environment variables. Do not commit real Home Assistant tokens.
 
+## HTTP API
+
+The bridge exposes a read-only sessions API for the V2 frontend. Configure the listen address with `API_ADDR` or `-api-addr`; use an empty value to disable it. The default is `127.0.0.1:8080`.
+
+Endpoints:
+
+- `GET /api/v1/sessions?limit=50&offset=0&sort=newest&search=&charger_id=&status=&started_after=&started_before=` lists completed sessions. Date filters use RFC3339 timestamps.
+- `GET /api/v1/sessions/active` lists active sessions.
+- `GET /api/v1/sessions/{session_id}` returns a completed session with meter values and lifecycle events.
+- `GET /api/v1/sessions/{session_id}/meter-values` returns raw persisted meter values.
+- `GET /api/v1/sessions/{session_id}/events` returns persisted session lifecycle events.
+
+Current limitations: status is derived from stored session state, so completed rows are reported as `completed` and active rows as `charging`. More specific stopped/interrupted status mapping will require persisted stop classification.
+
 ## License
 
 MIT

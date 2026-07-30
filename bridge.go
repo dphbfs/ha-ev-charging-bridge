@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"ha-ev-charging-bridge/internal/api"
 	"ha-ev-charging-bridge/internal/app"
 	bridgeconfig "ha-ev-charging-bridge/internal/config"
 	"ha-ev-charging-bridge/internal/homeassistant"
@@ -35,6 +38,21 @@ func run(cfg bridgeconfig.Runtime) error {
 		return err
 	}
 	defer store.Close()
+	if strings.TrimSpace(cfg.APIAddr) != "" {
+		listener, err := net.Listen("tcp", cfg.APIAddr)
+		if err != nil {
+			return fmt.Errorf("listen for HTTP API on %q: %w", cfg.APIAddr, err)
+		}
+		defer listener.Close()
+		server := &http.Server{Handler: api.New(store, cfg.Chargers).Handler(), ReadHeaderTimeout: 5 * time.Second}
+		defer server.Close()
+		go func() {
+			slog.Info("serving HTTP API", "addr", listener.Addr().String())
+			if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				slog.Warn("HTTP API stopped", "error", err)
+			}
+		}()
+	}
 	pipelines := make([]*app.Pipeline, 0, len(cfg.Chargers))
 	entityIDs := []string{}
 	for _, charger := range cfg.Chargers {

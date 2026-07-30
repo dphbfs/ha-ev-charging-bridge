@@ -100,6 +100,30 @@ WHERE charger_id = ?`, chargerID)
 	return session, true, nil
 }
 
+func (s *Store) ActiveSessions(ctx context.Context) ([]events.Session, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT session_id, charger_id, evse_id, connector_id, meter_id, state, started_at, start_energy_kwh, end_energy_kwh, energy_consumed_kwh
+FROM active_sessions
+ORDER BY started_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("query active sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []events.Session
+	for rows.Next() {
+		session, err := scanSession(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan active session: %w", err)
+		}
+		sessions = append(sessions, session)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate active sessions: %w", err)
+	}
+	return sessions, nil
+}
+
 func (s *Store) SaveCompletedSession(ctx context.Context, session events.Session) error {
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO completed_sessions (session_id, charger_id, evse_id, connector_id, meter_id, state, started_at, ended_at, start_energy_kwh, end_energy_kwh, energy_consumed_kwh)
@@ -132,6 +156,30 @@ WHERE session_id = ?`, sessionID)
 		return events.Session{}, false, fmt.Errorf("load completed session %q: %w", sessionID, err)
 	}
 	return session, true, nil
+}
+
+func (s *Store) CompletedSessions(ctx context.Context) ([]events.Session, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT session_id, charger_id, evse_id, connector_id, meter_id, state, started_at, ended_at, start_energy_kwh, end_energy_kwh, energy_consumed_kwh
+FROM completed_sessions
+ORDER BY started_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("query completed sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []events.Session
+	for rows.Next() {
+		session, err := scanCompletedSession(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan completed session: %w", err)
+		}
+		sessions = append(sessions, session)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate completed sessions: %w", err)
+	}
+	return sessions, nil
 }
 
 func scanCompletedSession(row scanner) (events.Session, error) {
