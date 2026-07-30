@@ -1,6 +1,6 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/base:latest
 ARG SOURCE_REPO=https://github.com/dphbfs/ha-ev-charging-bridge.git
-ARG SOURCE_REF=dev
+ARG SOURCE_REF=main
 
 FROM alpine:3.22 AS source
 ARG SOURCE_REPO
