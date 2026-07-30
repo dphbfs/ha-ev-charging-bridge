@@ -57,7 +57,3 @@ retention:
   meter_values: 90d
   lifecycle_events: 365d
   raw_events: 7d
-
-runtime:
-  database_path: var/bridge.db
-  log_file: log/app.log
