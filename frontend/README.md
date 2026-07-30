@@ -43,6 +43,10 @@ Use `?theme=light` to start a page in light mode, for example:
 
 Each page also includes a theme toggle.
 
+## Home Assistant Dev Mode
+
+Use `HOME_ASSISTANT_DEV.md` for the recommended Home Assistant dev loading workflow. The preferred path is a temporary Supervisor app/add-on with Ingress enabled, which runs the Vite dev server on port `8099` and opens the UI through Home Assistant's `OPEN WEB UI` flow.
+
 ## Build
 
 From `frontend/`:
