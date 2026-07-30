@@ -59,7 +59,7 @@ The build output is written by Vite to `frontend/dist/`.
 
 ## Interactions
 
-The mock-data app supports:
+The app loads session data from the backend API by default and falls back to mock data when the API is unavailable. It supports:
 
 - Overview search by session, charger, connector, or EVSE fields.
 - Status filtering.
@@ -74,7 +74,51 @@ The mock-data app supports:
 - Raw data expansion.
 - Timeline meter sample expansion affordance.
 
-Mock data remains local to `src/mock-data.ts` and is shaped to be replaced by API DTOs in a later task.
+Mock data remains local to `src/mock-data.ts` for the component gallery and offline fallback.
+
+## API Configuration
+
+The frontend resolves the backend API base URL in this order:
+
+1. `?apiBaseUrl=http://host:port` query parameter.
+2. `window.EV_CHARGING_API_BASE_URL` runtime global.
+3. `VITE_API_BASE_URL` build/dev environment variable.
+4. Empty string, which uses same-origin relative API paths.
+
+Examples:
+
+```sh
+VITE_API_BASE_URL=http://127.0.0.1:8080 npm run dev
+```
+
+Or:
+
+```text
+http://localhost:5173/index.html?apiBaseUrl=http://127.0.0.1:8080
+```
+
+For Home Assistant ingress, prefer same-origin relative paths unless the backend is deliberately exposed on a separate development origin.
+
+## Run Against The Go Backend
+
+Start the Go bridge with the HTTP API enabled:
+
+```sh
+API_ADDR=127.0.0.1:8080 go run .
+```
+
+Then start the frontend:
+
+```sh
+cd frontend
+VITE_API_BASE_URL=http://127.0.0.1:8080 npm run dev
+```
+
+Required backend endpoints:
+
+- `GET /api/v1/sessions`
+- `GET /api/v1/sessions/active`
+- `GET /api/v1/sessions/{session_id}`
 
 ## Validation Checklist
 
@@ -124,4 +168,11 @@ The static UI includes representative data for:
 
 ## Future API Integration
 
-The next frontend data task should add a small API client module and replace `src/mock-data.ts` as the default data source. Keep the component props/view models close to the current `ChargingSession`, `MeterSample`, and `TimelineEvent` types so backend DTO mapping stays isolated.
+API mapping lives in `src/api-client.ts`. Keep backend DTO changes isolated there so Lit components can continue using the `ChargingSession`, `MeterSample`, and `TimelineEvent` view models.
+
+## Troubleshooting API Loading
+
+- If the UI shows an API error banner, confirm the Go backend is running and `API_ADDR` matches the frontend API base URL.
+- If browser dev tools show CORS failures, use same-origin proxying/ingress or configure backend CORS in a future task.
+- If Home Assistant ingress returns wrong paths, use relative same-origin API URLs and avoid hard-coded private hostnames.
+- If there are no stored sessions yet, the API can return an empty history; the component gallery still shows mock states.
