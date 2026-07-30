@@ -23,6 +23,7 @@ const (
 	defaultConfigFilePath  = "config.yaml"
 	defaultDatabasePath    = "var/bridge.db"
 	defaultLogFilePath     = "log/app.log"
+	defaultAPIAddr         = "127.0.0.1:8080"
 )
 
 type Runtime struct {
@@ -36,6 +37,7 @@ type Runtime struct {
 	EndDebounce     time.Duration
 	DatabasePath    string
 	LogFile         string
+	APIAddr         string
 }
 
 type V1 struct {
@@ -145,6 +147,7 @@ type Retention struct {
 type Paths struct {
 	DatabasePath string `yaml:"database_path"`
 	LogFile      string `yaml:"log_file"`
+	APIAddr      string `yaml:"api_addr"`
 }
 
 func ParseRuntime() (Runtime, error) {
@@ -158,6 +161,7 @@ func ParseRuntime() (Runtime, error) {
 	flag.DurationVar(&cfg.EndDebounce, "end-debounce", envDurationOrDefault("SESSION_END_DEBOUNCE", defaultEndDebounce), "How long power must remain below the end threshold before ending a session")
 	flag.StringVar(&cfg.DatabasePath, "database", envOrDefault("DATABASE_PATH", defaultDatabasePath), "Path to SQLite runtime database")
 	flag.StringVar(&cfg.LogFile, "log-file", envOrDefault("LOG_FILE", defaultLogFilePath), "Path to append application logs")
+	flag.StringVar(&cfg.APIAddr, "api-addr", envOrDefault("API_ADDR", defaultAPIAddr), "HTTP API listen address; set empty to disable")
 	flag.Parse()
 
 	loaded, err := loadRuntimeConfig(cfg.ConfigFile)
@@ -420,6 +424,7 @@ func (c V1) toRuntime() *Runtime {
 		Chargers:     append([]Charger(nil), c.Chargers...),
 		DatabasePath: envOrValue(c.Runtime.DatabasePath, defaultDatabasePath),
 		LogFile:      envOrValue(c.Runtime.LogFile, defaultLogFilePath),
+		APIAddr:      envOrValue(c.Runtime.APIAddr, defaultAPIAddr),
 	}
 	if len(c.HomeAssistant.EventTypes) > 0 {
 		cfg.EventType = c.HomeAssistant.EventTypes[0]
@@ -465,6 +470,8 @@ func mergeRuntimeConfig(current Runtime, loaded Runtime) Runtime {
 			loaded.DatabasePath = current.DatabasePath
 		case "log-file":
 			loaded.LogFile = current.LogFile
+		case "api-addr":
+			loaded.APIAddr = current.APIAddr
 		}
 	})
 	return loaded
