@@ -34,7 +34,7 @@ LABEL \
 
 COPY --from=backend /out/ha-ev-charging-bridge /usr/local/bin/ha-ev-charging-bridge
 COPY --from=frontend /src/frontend/dist /app/frontend
-COPY addon/run.sh /run.sh
+COPY run.sh /run.sh
 RUN chmod +x /run.sh
 
 CMD ["/run.sh"]

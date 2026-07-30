@@ -1,5 +1,5 @@
 name: "EV Charging Bridge"
-version: "0.1.0-poc"
+version: "0.1.1-poc"
 slug: "ev_charging_bridge"
 description: "Track EV charging sessions from Home Assistant entities and inspect them in an ingress UI."
 url: "https://github.com/dphbfs/ha-ev-charging-bridge"
@@ -21,25 +21,37 @@ options:
   evse_id: evse-1
   connector_id: connector-1
   meter_id: meter-1
+  power_meter_id: meter-power-1
+  energy_meter_id: meter-energy-1
   power_entity_id: sensor.ev_charger_power
   energy_entity_id: sensor.ev_charger_energy
   availability_entity_id: switch.ev_charger
+  availability_available_state: "on"
+  availability_unavailable_state: "off"
+  availability_unavailable_after: 2m
   plug_entity_id: switch.ev_charger
   start_threshold_w: 200
   start_duration: 10s
   stop_threshold_w: 50
   stop_duration: 10s
+  stop_plug_state: "off"
 schema:
   charger_id: str
   charger_name: str
   evse_id: str
   connector_id: str
   meter_id: str
+  power_meter_id: str
+  energy_meter_id: str
   power_entity_id: str
   energy_entity_id: str
   availability_entity_id: str
+  availability_available_state: str
+  availability_unavailable_state: str
+  availability_unavailable_after: str
   plug_entity_id: str
   start_threshold_w: float
   start_duration: str
   stop_threshold_w: float
   stop_duration: str
+  stop_plug_state: str
