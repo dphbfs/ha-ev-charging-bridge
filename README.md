@@ -22,9 +22,9 @@ Install a specific release:
 curl -fsSL https://github.com/dphbfs/ha-ev-charging-bridge/releases/latest/download/install.sh | sh -s -- v0.0.1-alpha
 ```
 
-The installer downloads the matching release asset for the current Linux architecture, verifies its SHA-256 checksum, installs the binary to `/usr/local/bin`, creates `~/.ha-ev-charging-bridge/config.yaml` if needed, and enables the `ha-ev-charging-bridge` systemd service.
+The installer downloads the matching release asset for the current Linux architecture, verifies its SHA-256 checksum, installs the binary to `/usr/local/bin`, creates `~/.ha-ev-charging-bridge/bridge.yaml` if needed, and enables the `ha-ev-charging-bridge` systemd service.
 
-Edit `~/.ha-ev-charging-bridge/config.yaml`, then start the service:
+Edit `~/.ha-ev-charging-bridge/bridge.yaml`, then start the service:
 
 ```sh
 sudo systemctl start ha-ev-charging-bridge
@@ -49,7 +49,7 @@ Set at least:
 ```sh
 HA_URL=http://home-assistant.example.local:8123
 HA_TOKEN=your-home-assistant-token
-CONFIG_FILE=config.yaml
+CONFIG_FILE=bridge.yaml
 ```
 
 Run the bridge:
@@ -59,6 +59,19 @@ Run the bridge:
 ```
 
 The current POC writes SQLite runtime data under `var/` and logs under `log/` by default.
+
+## Home Assistant Add-on
+
+This repository also contains a Home Assistant add-on manifest and container wrapper:
+
+- `config.yaml` is the Home Assistant add-on manifest.
+- `bridge.yaml` is the standalone Go app example configuration.
+- `Dockerfile` builds the add-on image.
+- `rootfs/etc/services.d/ha-ev-charging-bridge/run` generates `/data/bridge.yaml` from add-on options and starts the backend plus a minimal ingress frontend.
+
+After installation, Home Assistant shows the add-on Configuration tab because the manifest defines `options` and `schema`. The current options only accept entity IDs. The schema validates entity ID shape/domain, but Home Assistant Supervisor add-on schemas do not validate that those entity IDs exist in the entity registry.
+
+The add-on exposes ingress on port `8099` with `panel_title` and `panel_icon`, so Home Assistant can offer the sidebar link toggle on the add-on page. The Logs tab shows the combined container logs with `[backend]` and `[frontend]` prefixes.
 
 ## Run From Source With Docker Compose
 
@@ -72,7 +85,7 @@ Use this mode when developing or testing the app from source in a containerized 
 
 ## Configuration
 
-V1 application settings are configured in `config.yaml`, including charger entity mappings. Home Assistant connection values use environment interpolation, so secrets such as `HA_TOKEN` stay in `.env` or the process environment.
+V1 application settings are configured in `bridge.yaml`, including charger entity mappings. Home Assistant connection values use environment interpolation, so secrets such as `HA_TOKEN` stay in `.env` or the process environment.
 
 Connection settings and runtime paths can be provided through `.env` or process environment variables. Do not commit real Home Assistant tokens.
 

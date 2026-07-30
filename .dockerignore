@@ -1,0 +1,8 @@
+.agents/
+.git/
+.github/
+.opencode/
+log/
+var/
+.env
+*.log

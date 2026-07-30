@@ -1,0 +1,161 @@
+#!/usr/bin/with-contenv bash
+set -euo pipefail
+
+OPTIONS_FILE=/data/options.json
+CONFIG_FILE=/data/bridge.yaml
+LOG_DIR=/data/log
+BACKEND_LOG="$LOG_DIR/backend.log"
+FRONTEND_LOG="$LOG_DIR/frontend.log"
+
+mkdir -p "$LOG_DIR" /www
+
+if [[ ! -f "$OPTIONS_FILE" ]]; then
+  echo "missing Home Assistant add-on options at $OPTIONS_FILE" >&2
+  exit 1
+fi
+
+option() {
+  local key="$1"
+  jq -r --arg key "$key" '.[$key] // ""' "$OPTIONS_FILE"
+}
+
+smart_plug_device="$(option smart_plug_device)"
+smart_plug_power="$(option smart_plug_power)"
+smart_plug_energy_kwh="$(option smart_plug_energy_kwh)"
+smart_plug_voltage="$(option smart_plug_voltage)"
+
+if [[ -z "$smart_plug_device" || -z "$smart_plug_power" || -z "$smart_plug_energy_kwh" ]]; then
+  echo "smart_plug_device, smart_plug_power, and smart_plug_energy_kwh are required" >&2
+  exit 1
+fi
+
+cat >"$CONFIG_FILE" <<EOF
+home_assistant:
+  url: \${HA_URL}
+  token: \${HA_TOKEN}
+  event_types:
+    - state_changed
+
+ha_entities:
+  smart_plug:
+    device: &smart_plug_device $smart_plug_device
+    power: &smart_plug_power $smart_plug_power
+    energy_kwh: &smart_plug_energy_kwh $smart_plug_energy_kwh
+    voltage: &smart_plug_voltage $smart_plug_voltage
+
+chargers:
+  - charger_id: charger-1
+    charger_name: Home Assistant EV Charger
+    evse_id: evse-1
+    connector_id: connector-1
+    meter_id: meter-1
+    entities:
+      power_w: *smart_plug_power
+      energy_kwh: *smart_plug_energy_kwh
+      availability: *smart_plug_device
+      plug: *smart_plug_device
+    availability:
+      entity_id: *smart_plug_device
+      available_state: "on"
+      unavailable_state: "off"
+      unavailable_after: 2m
+    start:
+      type: power_threshold
+      entity_id: *smart_plug_power
+      threshold_w: 200
+      duration: 10s
+    stop:
+      - type: power_threshold
+        entity_id: *smart_plug_power
+        threshold_w: 50
+        duration: 10s
+      - type: device_offline
+        entity_id: *smart_plug_device
+        state: "off"
+        duration: 10s
+    meters:
+      - meter_id: meter-1
+        entity_id: *smart_plug_power
+        unit: W
+        aggregation: average
+        outside_session_storage: drop
+      - meter_id: meter-1
+        entity_id: *smart_plug_energy_kwh
+        unit: kWh
+        aggregation: last
+        outside_session_storage: drop
+
+retention:
+  meter_values: 90d
+  lifecycle_events: 365d
+  raw_events: 7d
+
+runtime:
+  database_path: /data/bridge.db
+  log_file: $BACKEND_LOG
+EOF
+
+cat >/www/index.html <<EOF
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EV Charging Bridge</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; color: #1f2937; }
+    main { max-width: 52rem; }
+    code { background: #eef2f7; padding: .15rem .35rem; border-radius: .25rem; }
+    .card { border: 1px solid #d1d5db; border-radius: .75rem; padding: 1rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>EV Charging Bridge</h1>
+    <section class="card">
+      <p>The backend is running as a Home Assistant add-on service.</p>
+      <p>Configured entities:</p>
+      <ul>
+        <li>Device: <code>$smart_plug_device</code></li>
+        <li>Power: <code>$smart_plug_power</code></li>
+        <li>Energy: <code>$smart_plug_energy_kwh</code></li>
+        <li>Voltage: <code>$smart_plug_voltage</code></li>
+      </ul>
+      <p>Use the add-on Logs tab for backend and frontend logs.</p>
+    </section>
+  </main>
+</body>
+</html>
+EOF
+
+export HA_URL="${HA_URL:-http://supervisor/core}"
+export HA_TOKEN="${HA_TOKEN:-${SUPERVISOR_TOKEN:-}}"
+export CONFIG_FILE
+
+if [[ -z "$HA_TOKEN" ]]; then
+  echo "SUPERVISOR_TOKEN is unavailable; cannot authenticate with Home Assistant" >&2
+  exit 1
+fi
+
+: >"$BACKEND_LOG"
+: >"$FRONTEND_LOG"
+
+tail -n 0 -F "$BACKEND_LOG" | sed -u 's/^/[backend] /' &
+backend_tail_pid=$!
+tail -n 0 -F "$FRONTEND_LOG" | sed -u 's/^/[frontend] /' &
+frontend_tail_pid=$!
+
+/usr/local/bin/ha-ev-charging-bridge >"$BACKEND_LOG" 2>&1 &
+backend_pid=$!
+httpd -f -p 8099 -h /www >"$FRONTEND_LOG" 2>&1 &
+frontend_pid=$!
+
+terminate() {
+  kill "$backend_pid" "$frontend_pid" "$backend_tail_pid" "$frontend_tail_pid" 2>/dev/null || true
+}
+trap terminate EXIT INT TERM
+
+wait -n "$backend_pid" "$frontend_pid"
+exit_code=$?
+terminate
+exit "$exit_code"

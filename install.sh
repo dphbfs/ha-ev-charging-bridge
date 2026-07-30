@@ -77,8 +77,8 @@ run_root install -d -m 0755 "$INSTALL_DIR"
 run_root install -m 0755 "$TMP_DIR/$APP_NAME-$ASSET_ARCH" "$BINARY_PATH"
 run_root install -d -o "$INSTALL_USER" -g "$INSTALL_GROUP" -m 0755 "$APP_HOME"
 
-if [ ! -f "$APP_HOME/config.yaml" ]; then
-  run_root tee "$APP_HOME/config.yaml" >/dev/null <<EOF
+if [ ! -f "$APP_HOME/bridge.yaml" ]; then
+  run_root tee "$APP_HOME/bridge.yaml" >/dev/null <<EOF
 home_assistant:
   url: http://replace-me.local:8123
   token: replace-me
@@ -91,8 +91,8 @@ runtime:
   database_path: $APP_HOME/bridge.db
   log_file: $APP_HOME/app.log
 EOF
-  run_root chown "$INSTALL_USER:$INSTALL_GROUP" "$APP_HOME/config.yaml"
-  echo "created placeholder config at $APP_HOME/config.yaml; edit it before starting the service"
+  run_root chown "$INSTALL_USER:$INSTALL_GROUP" "$APP_HOME/bridge.yaml"
+  echo "created placeholder config at $APP_HOME/bridge.yaml; edit it before starting the service"
 fi
 
 run_root tee "/etc/systemd/system/$SERVICE_NAME.service" >/dev/null <<EOF
@@ -106,7 +106,7 @@ Type=simple
 User=$INSTALL_USER
 Group=$INSTALL_GROUP
 Environment=HOME=$USER_HOME
-Environment=CONFIG_FILE=$APP_HOME/config.yaml
+Environment=CONFIG_FILE=$APP_HOME/bridge.yaml
 Environment=DATABASE_PATH=$APP_HOME/bridge.db
 Environment=LOG_FILE=$APP_HOME/app.log
 WorkingDirectory=$APP_HOME

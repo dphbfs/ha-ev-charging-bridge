@@ -21,7 +21,7 @@ const (
 	defaultStartThresholdW = 200
 	defaultEndThresholdW   = 50
 	defaultEndDebounce     = 10 * time.Second
-	defaultConfigFilePath  = "config.yaml"
+	defaultConfigFilePath  = "bridge.yaml"
 	defaultRuntimeDirName  = ".ha-ev-charging-bridge"
 )
 

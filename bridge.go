@@ -27,7 +27,7 @@ func run(cfg bridgeconfig.Runtime) error {
 		return errors.New("missing Home Assistant token: set HA_TOKEN or pass -token")
 	}
 	if len(cfg.Chargers) == 0 {
-		return errors.New("missing charger configuration: define at least one charger in config.yaml")
+		return errors.New("missing charger configuration: define at least one charger in bridge.yaml")
 	}
 	ctx := context.Background()
 	store, err := persistence.Open(ctx, cfg.DatabasePath)
@@ -38,7 +38,7 @@ func run(cfg bridgeconfig.Runtime) error {
 	pipelines := make([]*app.Pipeline, 0, len(cfg.Chargers))
 	for _, charger := range cfg.Chargers {
 		if strings.TrimSpace(charger.ChargerID) == "" {
-			return errors.New("missing charger configuration: define charger_id in config.yaml")
+			return errors.New("missing charger configuration: define charger_id in bridge.yaml")
 		}
 		slog.Info("loaded charger", "charger", charger.ChargerID, "power_entity_id", charger.Entities.PowerW, "energy_entity_id", charger.Entities.EnergyKWh)
 		pipeline, err := app.NewPipeline(ctx, charger, store)
