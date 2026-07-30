@@ -10,14 +10,20 @@ charger_name="$(bashio::config 'charger_name')"
 evse_id="$(bashio::config 'evse_id')"
 connector_id="$(bashio::config 'connector_id')"
 meter_id="$(bashio::config 'meter_id')"
+power_meter_id="$(bashio::config 'power_meter_id')"
+energy_meter_id="$(bashio::config 'energy_meter_id')"
 power_entity_id="$(bashio::config 'power_entity_id')"
 energy_entity_id="$(bashio::config 'energy_entity_id')"
 availability_entity_id="$(bashio::config 'availability_entity_id')"
+availability_available_state="$(bashio::config 'availability_available_state')"
+availability_unavailable_state="$(bashio::config 'availability_unavailable_state')"
+availability_unavailable_after="$(bashio::config 'availability_unavailable_after')"
 plug_entity_id="$(bashio::config 'plug_entity_id')"
 start_threshold_w="$(bashio::config 'start_threshold_w')"
 start_duration="$(bashio::config 'start_duration')"
 stop_threshold_w="$(bashio::config 'stop_threshold_w')"
 stop_duration="$(bashio::config 'stop_duration')"
+stop_plug_state="$(bashio::config 'stop_plug_state')"
 
 cat > "${CONFIG_FILE}" <<EOF
 home_assistant:
@@ -39,9 +45,9 @@ chargers:
       plug: "${plug_entity_id}"
     availability:
       entity_id: "${availability_entity_id}"
-      available_state: "on"
-      unavailable_state: "off"
-      unavailable_after: 2m
+      available_state: "${availability_available_state}"
+      unavailable_state: "${availability_unavailable_state}"
+      unavailable_after: ${availability_unavailable_after}
     start:
       type: power_threshold
       entity_id: "${power_entity_id}"
@@ -54,15 +60,15 @@ chargers:
         duration: ${stop_duration}
       - type: device_offline
         entity_id: "${plug_entity_id}"
-        state: "off"
+        state: "${stop_plug_state}"
         duration: ${stop_duration}
     meters:
-      - meter_id: ${meter_id}
+      - meter_id: "${power_meter_id}"
         entity_id: "${power_entity_id}"
         unit: W
         aggregation: average
         outside_session_storage: drop
-      - meter_id: ${meter_id}
+      - meter_id: "${energy_meter_id}"
         entity_id: "${energy_entity_id}"
         unit: kWh
         aggregation: last

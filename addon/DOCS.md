@@ -2,21 +2,27 @@
 
 ## Configuration
 
-Set the charger identity and Home Assistant entity IDs in the add-on options.
+Set the charger identity and Home Assistant entity relationships in the add-on options.
 
 - `charger_id`: stable internal charger ID.
 - `charger_name`: display name shown in the UI.
 - `evse_id`: EVSE identifier.
 - `connector_id`: connector identifier.
-- `meter_id`: meter identifier.
+- `meter_id`: charger-level meter identifier.
+- `power_meter_id`: meter identifier for power readings.
+- `energy_meter_id`: meter identifier for cumulative energy readings.
 - `power_entity_id`: Home Assistant entity reporting charger power in watts.
 - `energy_entity_id`: Home Assistant entity reporting cumulative charger energy in kWh.
 - `availability_entity_id`: entity used for availability checks.
+- `availability_available_state`: state that marks the charger available.
+- `availability_unavailable_state`: state that marks the charger unavailable.
+- `availability_unavailable_after`: duration before unavailable state is applied.
 - `plug_entity_id`: entity used for the device-offline stop rule.
 - `start_threshold_w`: power threshold that starts a charging session.
 - `start_duration`: duration power must remain above threshold.
 - `stop_threshold_w`: power threshold that can stop a charging session.
 - `stop_duration`: duration power/offline state must remain before stopping.
+- `stop_plug_state`: plug entity state that stops a charging session.
 
 ## Runtime Data
 

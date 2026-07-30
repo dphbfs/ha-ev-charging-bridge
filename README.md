@@ -74,13 +74,13 @@ Use this mode when developing or testing the app from source in a containerized 
 
 This repository includes a proof-of-concept Home Assistant add-on under `addon/`. Home Assistant OS or Supervised users can add this repository as a custom add-on repository from **Settings > Add-ons > Add-on Store > Repositories**.
 
-For the current development branch, add the repository with the branch suffix:
+Add this repository URL:
 
 ```text
-https://github.com/dphbfs/ha-ev-charging-bridge#dev
+https://github.com/dphbfs/ha-ev-charging-bridge
 ```
 
-The add-on uses Home Assistant Ingress and `homeassistant_api: true`, so it does not require a user-created long-lived access token. It uses the Supervisor-provided token internally and stores runtime data in the add-on persistent `/data` volume.
+The add-on uses Home Assistant Ingress and `homeassistant_api: true`, so it does not require a user-created long-lived access token. Configure the charger identity, entity relationships, availability states, and start/stop thresholds in the add-on options. It uses the Supervisor-provided token internally and stores runtime data in the add-on persistent `/data` volume.
 
 ## Configuration
 
