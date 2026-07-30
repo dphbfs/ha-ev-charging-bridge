@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,8 +27,9 @@ type Store interface {
 }
 
 type Server struct {
-	store    Store
-	chargers map[string]bridgeconfig.Charger
+	store       Store
+	chargers    map[string]bridgeconfig.Charger
+	frontendDir string
 }
 
 func New(store Store, chargers []bridgeconfig.Charger) *Server {
@@ -36,6 +40,22 @@ func New(store Store, chargers []bridgeconfig.Charger) *Server {
 	return &Server{store: store, chargers: byID}
 }
 
+func (s *Server) ServeFrontend(dir string) error {
+	trimmed := strings.TrimSpace(dir)
+	if trimmed == "" {
+		return nil
+	}
+	info, err := os.Stat(filepath.Join(trimmed, "index.html"))
+	if err != nil {
+		return fmt.Errorf("load frontend assets from %q: %w", trimmed, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("load frontend assets from %q: index.html is a directory", trimmed)
+	}
+	s.frontendDir = trimmed
+	return nil
+}
+
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/sessions", s.listSessions)
@@ -43,7 +63,28 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/sessions/{session_id}", s.sessionDetail)
 	mux.HandleFunc("GET /api/v1/sessions/{session_id}/meter-values", s.meterValues)
 	mux.HandleFunc("GET /api/v1/sessions/{session_id}/events", s.sessionEvents)
+	if s.frontendDir != "" {
+		mux.HandleFunc("GET /", s.frontendFile)
+	}
 	return mux
+}
+
+func (s *Server) frontendFile(w http.ResponseWriter, r *http.Request) {
+	path := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+	if path == "" {
+		path = "index.html"
+	}
+	if path == "." {
+		path = "index.html"
+	}
+	if strings.HasPrefix(path, "..") {
+		path = "index.html"
+	}
+	if _, err := fs.Stat(os.DirFS(s.frontendDir), path); err == nil {
+		http.ServeFile(w, r, filepath.Join(s.frontendDir, path))
+		return
+	}
+	http.ServeFile(w, r, filepath.Join(s.frontendDir, "index.html"))
 }
 
 type sessionDTO struct {

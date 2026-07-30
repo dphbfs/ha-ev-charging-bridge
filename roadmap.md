@@ -278,7 +278,7 @@ Validate the V1 runtime against real Home Assistant charger events and SQLite pe
 
 Manual test flow:
 
-1. Confirm `config.yaml` uses real Home Assistant entity IDs for power, cumulative energy, availability, start/stop detection, and meters.
+1. Confirm `bridge.yaml` uses real Home Assistant entity IDs for power, cumulative energy, availability, start/stop detection, and meters.
 2. Start the app with a clean or known SQLite database path.
 3. Start the app while the car is already charging and verify an active session is created from initial Home Assistant state.
 4. Start a new charging session after the app is already running and verify the power threshold creates an active session after the configured start duration.

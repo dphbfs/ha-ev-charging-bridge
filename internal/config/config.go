@@ -21,7 +21,7 @@ const (
 	defaultStartThresholdW = 200
 	defaultEndThresholdW   = 50
 	defaultEndDebounce     = 10 * time.Second
-	defaultConfigFilePath  = "config.yaml"
+	defaultConfigFilePath  = "bridge.yaml"
 	defaultRuntimeDirName  = ".ha-ev-charging-bridge"
 	defaultAPIAddr         = "127.0.0.1:8080"
 )
@@ -38,6 +38,7 @@ type Runtime struct {
 	DatabasePath    string
 	LogFile         string
 	APIAddr         string
+	FrontendDir     string
 }
 
 type V1 struct {
@@ -162,6 +163,7 @@ func ParseRuntime() (Runtime, error) {
 	flag.StringVar(&cfg.DatabasePath, "database", envOrDefault("DATABASE_PATH", defaultRuntimePath("bridge.db")), "Path to SQLite runtime database")
 	flag.StringVar(&cfg.LogFile, "log-file", envOrDefault("LOG_FILE", defaultRuntimePath("app.log")), "Path to append application logs")
 	flag.StringVar(&cfg.APIAddr, "api-addr", envOrDefault("API_ADDR", defaultAPIAddr), "HTTP API listen address; set empty to disable")
+	flag.StringVar(&cfg.FrontendDir, "frontend-dir", os.Getenv("FRONTEND_DIR"), "Directory containing built frontend assets to serve")
 	flag.Parse()
 
 	loaded, err := loadRuntimeConfig(cfg.ConfigFile)
@@ -472,6 +474,8 @@ func mergeRuntimeConfig(current Runtime, loaded Runtime) Runtime {
 			loaded.LogFile = current.LogFile
 		case "api-addr":
 			loaded.APIAddr = current.APIAddr
+		case "frontend-dir":
+			loaded.FrontendDir = current.FrontendDir
 		}
 	})
 	return loaded
