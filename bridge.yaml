@@ -8,12 +8,12 @@ ha_entities:
   smart_plug:
     device: &smart_plug_device switch.charger_plug
     power: &smart_plug_power sensor.charger_plug_current_consumption
-    energy_kwh: &smart_plug_energy_kwh sensor.car_charger_energy
-    voltage: &smart_plug_voltage sensor.charger_plug_voltage
+    energy_kwh: &smart_plug_energy_kwh sensor.charger_energy
+    voltage: &smart_plug_voltage sensor.charger_voltage
 
 chargers:
   - charger_id: charger-1
-    charger_name: Tesla Mobile connector
+    charger_name: Example EV charger
     evse_id: evse-1
     connector_id: connector-1
     meter_id: meter-1

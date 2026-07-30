@@ -130,29 +130,29 @@ func TestLoadDotEnvSupportsConfigEnvironmentInterpolation(t *testing.T) {
 }
 
 func TestExampleConfigContainsNoRealSecretsOrPersonalHostnames(t *testing.T) {
-	payload, err := os.ReadFile("../../config.yaml")
+	payload, err := os.ReadFile("../../bridge.yaml")
 	if err != nil {
-		t.Fatalf("read config.yaml: %v", err)
+		t.Fatalf("read bridge.yaml: %v", err)
 	}
 	content := string(payload)
 	for _, forbidden := range []string{"eyJ", "http://homeassistant.local", "https://homeassistant.local"} {
 		if strings.Contains(content, forbidden) {
-			t.Fatalf("config.yaml contains forbidden example value %q", forbidden)
+			t.Fatalf("bridge.yaml contains forbidden example value %q", forbidden)
 		}
 	}
 }
 
 func TestExampleConfigParses(t *testing.T) {
-	payload, err := os.ReadFile("../../config.yaml")
+	payload, err := os.ReadFile("../../bridge.yaml")
 	if err != nil {
-		t.Fatalf("read config.yaml: %v", err)
+		t.Fatalf("read bridge.yaml: %v", err)
 	}
 	_, err = ParseV1(payload, mapLookup(map[string]string{
 		"HA_URL":   "http://ha.test:8123",
 		"HA_TOKEN": "test-token",
 	}))
 	if err != nil {
-		t.Fatalf("ParseV1(config.yaml) error = %v", err)
+		t.Fatalf("ParseV1(bridge.yaml) error = %v", err)
 	}
 }
 
