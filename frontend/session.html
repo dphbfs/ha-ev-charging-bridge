@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Session Details</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body data-screen="details">
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Home Assistant navigation">
+        <div class="sidebar-title"><span class="icon">☰</span><strong>Home Assistant</strong></div>
+        <nav>
+          <a><span>▦</span>Overview</a><a><span>ϟ</span>Energy</a><a><span>▣</span>Map</a><a><span>☷</span>Logbook</a><a><span>▥</span>History</a><a><span>▣</span>Media</a><a class="active"><span>ϟ</span>EV Charging</a>
+        </nav>
+        <nav class="sidebar-bottom"><a><span>●</span>Notifications <b class="pill warn">2</b></a><a><span class="avatar">JD</span>John Doe</a></nav>
+      </aside>
+
+      <main class="content">
+        <header class="mobile-bar"><a href="./index.html" aria-label="Back">‹</a><strong>Charging Sessions</strong><button class="refresh" aria-label="Refresh">↻</button></header>
+        <header class="page-header detail-header">
+          <a class="back-link" href="./index.html">‹ Charging Sessions</a>
+          <div class="title-line"><h1>Session Details</h1><span class="status completed">Completed</span></div>
+          <button class="theme-toggle" type="button">Light mode</button>
+        </header>
+        <div class="subhead"><span>▣ May 19, 2024, 2:30 PM</span><span>›</span><span>Session ID: sess_9f3a2e-7c4a8b</span><button aria-label="Copy session ID">▣</button></div>
+
+        <section class="metric-grid">
+          <article class="metric"><span class="metric-icon green">ϟ</span><div><p>Energy Consumed</p><strong>12.47 kWh</strong></div></article>
+          <article class="metric"><span class="metric-icon blue">◔</span><div><p>Duration</p><strong>2h 58m</strong></div></article>
+          <article class="metric"><span class="metric-icon green">⌁</span><div><p>Start Reading</p><strong>2441.10 kWh</strong></div></article>
+          <article class="metric"><span class="metric-icon green">⌁</span><div><p>End Reading</p><strong>2453.57 kWh</strong></div></article>
+          <article class="metric wide"><span class="metric-icon blue">▥</span><div><p>Charger</p><strong>Charger 1</strong><small>wallbox-1</small></div></article>
+          <article class="metric wide"><span class="metric-icon blue">●</span><div><p>Connector</p><strong>Connector 1</strong><small>conn-1</small></div></article>
+        </section>
+
+        <section class="panel chart-panel">
+          <div class="panel-header"><h2>Energy and Power</h2><div class="chart-controls"><label><input type="checkbox" checked /> Power (kW)</label><label><input type="checkbox" checked /> Energy (kWh)</label><button>1h</button><button>3h</button><button class="active">Full</button><button>Reset zoom</button></div></div>
+          <div class="chart-wrap detail-chart" data-chart="detail"></div>
+        </section>
+
+        <section class="detail-grid">
+          <article class="panel key-values"><h2>Details</h2><dl><div><dt>Charger ID</dt><dd>wallbox-1</dd></div><div><dt>EVSE ID</dt><dd>evse-001</dd></div><div><dt>Connector ID</dt><dd>conn-1</dd></div><div><dt>Meter ID</dt><dd>meter-001</dd></div><div><dt>Started at</dt><dd>May 19, 2024, 2:30 PM</dd></div><div><dt>Ended at</dt><dd>May 19, 2024, 5:28 PM</dd></div><div><dt>Session state</dt><dd><span class="status completed">Completed</span></dd></div><div><dt>Full Session ID</dt><dd>sess_9f3a2e-7c4a8b ▣</dd></div></dl></article>
+          <article class="panel timeline"><h2>Event Timeline</h2><ol><li><span class="node play">▶</span><time>2:30 PM</time><p>Session started</p></li><li><span class="node dots">•••</span><time>2:30 PM – 5:28 PM</time><p>214 meter updates <button>Show samples</button></p></li><li><span class="node stop">■</span><time>5:28 PM</time><p>Charging stopped <small>Reason: charging_stopped</small></p></li><li><span class="node done">✓</span><time>5:28 PM</time><p>Session completed</p></li></ol></article>
+        </section>
+        <details class="panel raw-data"><summary>Raw data</summary><pre>{ "session_id": "sess_9f3a2e-7c4a8b", "state": "completed" }</pre></details>
+      </main>
+    </div>
+    <script src="./app.js"></script>
+  </body>
+</html>
